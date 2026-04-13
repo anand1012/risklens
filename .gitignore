@@ -1,0 +1,42 @@
+# Secrets — never commit
+.env
+*.json
+!package.json
+!package-lock.json
+secrets/
+*-key.json
+*-credentials.json
+service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/build/
+
+# Data
+/tmp/
+*.parquet
+*.csv
+*.parquet.gzip
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# GCP
+.gcloud/
