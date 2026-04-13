@@ -17,8 +17,6 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
-
 from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
