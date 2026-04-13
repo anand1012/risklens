@@ -129,6 +129,9 @@ jobs:
           location: ${{ env.REGION }}
           project_id: ${{ env.PROJECT }}
 
+      - name: Ensure namespace exists
+        run: kubectl apply -f infra/k8s/namespace.yaml
+
       - name: Sync secrets from Secret Manager
         run: |
           ANTHROPIC=$(gcloud secrets versions access latest \
