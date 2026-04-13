@@ -37,11 +37,6 @@ spec:
                 secretKeyRef:
                   name: risklens-secrets
                   key: ANTHROPIC_API_KEY
-            - name: COHERE_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: risklens-secrets
-                  key: COHERE_API_KEY
             - name: LANGCHAIN_API_KEY
               valueFrom:
                 secretKeyRef:

@@ -49,7 +49,6 @@ async def chat(req: ChatRequest, request: Request):
             project=project(),
             top_k=req.top_k,
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
-            cohere_api_key=os.environ.get("COHERE_API_KEY"),
         ):
             yield chunk
 

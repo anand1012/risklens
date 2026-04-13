@@ -19,7 +19,7 @@ langchain-community==0.2.0
 langchain-google-community==1.0.3
 langgraph==0.1.5
 langsmith==0.1.63
-cohere==5.3.3
+google-cloud-aiplatform==1.57.0
 rank-bm25==0.2.2
 
 # API
