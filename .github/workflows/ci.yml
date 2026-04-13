@@ -1,0 +1,184 @@
+name: CI/CD — Build · Push · Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PROJECT: risklens-frtb-2026
+  REGION: us-central1
+  CLUSTER: risklens-cluster
+  AR_REPO: risklens
+  NAMESPACE: risklens
+
+jobs:
+  # ── Lint ────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install linting tools
+        run: pip install ruff
+
+      - name: Ruff lint
+        run: ruff check api/ indexing/ --select E,F,W --ignore E501
+
+  # ── Build & Push API image ───────────────────────────────────────────────────
+  build-api:
+    name: Build API image
+    runs-on: ubuntu-latest
+    needs: lint
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - id: meta
+        name: Set image tag
+        run: |
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT }}/${{ env.AR_REPO }}/api:${{ github.sha }}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Build API image
+        run: |
+          docker build \
+            -f api/Dockerfile \
+            -t ${{ steps.meta.outputs.image }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT }}/${{ env.AR_REPO }}/api:latest \
+            .
+
+      - name: Push API image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker push ${{ steps.meta.outputs.image }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT }}/${{ env.AR_REPO }}/api:latest
+
+  # ── Build & Push Frontend image ─────────────────────────────────────────────
+  build-frontend:
+    name: Build Frontend image
+    runs-on: ubuntu-latest
+    needs: lint
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - id: meta
+        name: Set image tag
+        run: |
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT }}/${{ env.AR_REPO }}/frontend:${{ github.sha }}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Build Frontend image
+        run: |
+          docker build \
+            -f frontend/Dockerfile \
+            -t ${{ steps.meta.outputs.image }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT }}/${{ env.AR_REPO }}/frontend:latest \
+            frontend/
+
+      - name: Push Frontend image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker push ${{ steps.meta.outputs.image }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT }}/${{ env.AR_REPO }}/frontend:latest
+
+  # ── Deploy to GKE ────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to GKE
+    runs-on: ubuntu-latest
+    needs: [build-api, build-frontend]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT }}
+
+      # Sync secrets from GCP Secret Manager → k8s Secret
+      # This avoids storing secret values in k8s manifests or repo
+      - name: Sync secrets from Secret Manager
+        run: |
+          ANTHROPIC=$(gcloud secrets versions access latest \
+            --secret=risklens-anthropic-api-key --project=${{ env.PROJECT }})
+          COHERE=$(gcloud secrets versions access latest \
+            --secret=risklens-cohere-api-key --project=${{ env.PROJECT }})
+          LANGSMITH=$(gcloud secrets versions access latest \
+            --secret=risklens-langsmith-api-key --project=${{ env.PROJECT }})
+
+          kubectl create secret generic risklens-secrets \
+            --namespace=${{ env.NAMESPACE }} \
+            --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC" \
+            --from-literal=COHERE_API_KEY="$COHERE" \
+            --from-literal=LANGCHAIN_API_KEY="$LANGSMITH" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # Apply all manifests (namespace, SA, configmap, deployments, services, ingress, HPA)
+      - name: Apply k8s manifests
+        run: kubectl apply -f infra/k8s/ --namespace=${{ env.NAMESPACE }}
+
+      # Patch images with the exact SHA-tagged versions just built
+      - name: Update API image
+        run: |
+          kubectl set image deployment/risklens-api \
+            api=${{ needs.build-api.outputs.image }} \
+            --namespace=${{ env.NAMESPACE }}
+
+      - name: Update Frontend image
+        run: |
+          kubectl set image deployment/risklens-frontend \
+            frontend=${{ needs.build-frontend.outputs.image }} \
+            --namespace=${{ env.NAMESPACE }}
+
+      # Wait for rollout and report status
+      - name: Wait for API rollout
+        run: |
+          kubectl rollout status deployment/risklens-api \
+            --namespace=${{ env.NAMESPACE }} --timeout=180s
+
+      - name: Wait for Frontend rollout
+        run: |
+          kubectl rollout status deployment/risklens-frontend \
+            --namespace=${{ env.NAMESPACE }} --timeout=120s
+
+      - name: Deployment summary
+        run: |
+          echo "=== Deployment complete ==="
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl get ingress -n ${{ env.NAMESPACE }}
