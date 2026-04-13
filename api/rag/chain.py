@@ -122,7 +122,18 @@ async def stream_answer(
     sources_json = _sources_payload(docs)
     yield f"data: __sources__{sources_json}\n\n"
 
-    async for chunk in llm.astream(messages):
+    async for chunk in llm.astream(
+        messages,
+        config={
+            "run_name": "risklens_chat",
+            "metadata": {
+                "query": query,
+                "top_k": top_k,
+                "docs_retrieved": len(docs),
+                "source_types": list({d.source_type for d in docs}),
+            },
+        },
+    ):
         token = chunk.content
         if token:
             yield f"data: {token}\n\n"
@@ -192,7 +203,18 @@ async def answer(
         HumanMessage(content=user_message),
     ]
 
-    response = await llm.ainvoke(messages)
+    response = await llm.ainvoke(
+        messages,
+        config={
+            "run_name": "risklens_chat",
+            "metadata": {
+                "query": query,
+                "top_k": top_k,
+                "docs_retrieved": len(docs),
+                "source_types": list({d.source_type for d in docs}),
+            },
+        },
+    )
     return {
         "answer": response.content,
         "sources": [

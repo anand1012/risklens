@@ -8,10 +8,15 @@ Lifespan startup loads:
 These are stored on app.state so all routers share a single instance.
 
 Environment variables required:
-  GCP_PROJECT       — GCP project ID (default: risklens-frtb-2026)
-  GCS_BUCKET        — GCS bucket with BM25 index (default: risklens-frtb-2026-indexes)
-  ANTHROPIC_API_KEY — for Claude (chat endpoint)
-  COHERE_API_KEY    — for embeddings (chat endpoint)
+  GCP_PROJECT            — GCP project ID (default: risklens-frtb-2026)
+  GCS_BUCKET             — GCS bucket with BM25 index (default: risklens-frtb-2026-indexes)
+  ANTHROPIC_API_KEY      — for Claude (chat endpoint)
+  COHERE_API_KEY         — for embeddings (chat endpoint)
+
+LangSmith tracing (optional — omit to disable):
+  LANGCHAIN_TRACING_V2   — set to "true" to enable
+  LANGCHAIN_API_KEY      — LangSmith API key
+  LANGCHAIN_PROJECT      — project name in LangSmith (default: risklens)
 """
 
 import logging
@@ -20,6 +25,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from langsmith import Client as LangSmithClient
 
 from api.db.bigquery import get_client
 from api.routers import catalog, chat, governance, lineage, search
@@ -34,9 +41,30 @@ logger = logging.getLogger(__name__)
 _GCS_BUCKET = os.environ.get("GCS_BUCKET", "risklens-frtb-2026-indexes")
 
 
+def _init_langsmith() -> None:
+    """Enable LangSmith tracing if env vars are present."""
+    if os.environ.get("LANGCHAIN_TRACING_V2", "").lower() != "true":
+        logger.info("LangSmith tracing disabled (set LANGCHAIN_TRACING_V2=true to enable)")
+        return
+    if not os.environ.get("LANGCHAIN_API_KEY"):
+        logger.warning("LANGCHAIN_TRACING_V2=true but LANGCHAIN_API_KEY is not set — tracing skipped")
+        return
+    # Default project name so traces are grouped under "risklens" in the UI
+    os.environ.setdefault("LANGCHAIN_PROJECT", "risklens")
+    try:
+        LangSmithClient()  # validates the key at startup
+        logger.info(
+            "LangSmith tracing enabled → project: %s",
+            os.environ["LANGCHAIN_PROJECT"],
+        )
+    except Exception as e:
+        logger.warning("LangSmith init failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up RiskLens API…")
+    _init_langsmith()
 
     app.state.bq_client = get_client()
     logger.info("BigQuery client ready (project: %s)", app.state.bq_client.project)
