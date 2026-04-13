@@ -4,18 +4,14 @@ metadata:
   name: risklens-ingress
   namespace: risklens
   annotations:
-    # GKE managed TLS certificate (replace with your domain)
-    networking.gke.io/managed-certificates: risklens-cert
-    # GKE native HTTP(S) load balancer
     kubernetes.io/ingress.class: "gce"
-    # Reserve a static IP (created by setup_gke.sh)
     kubernetes.io/ingress.global-static-ip-name: risklens-ip
+    networking.gke.io/managed-certificates: risklens-cert
 spec:
   rules:
-    - host: risklens.example.com   # replace with your domain
+    - host: risklens.preciseguess.com
       http:
         paths:
-          # API routes go directly to the FastAPI service
           - path: /assets
             pathType: Prefix
             backend:
@@ -58,7 +54,6 @@ spec:
                 name: risklens-api
                 port:
                   number: 8000
-          # Everything else → React SPA
           - path: /
             pathType: Prefix
             backend:
@@ -74,4 +69,4 @@ metadata:
   namespace: risklens
 spec:
   domains:
-    - risklens.example.com   # replace with your domain
+    - risklens.preciseguess.com
