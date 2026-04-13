@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: risklens-api
+  namespace: risklens
+  labels:
+    app: risklens-api
+spec:
+  type: ClusterIP
+  selector:
+    app: risklens-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP

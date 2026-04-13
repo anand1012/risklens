@@ -1,0 +1,77 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: risklens-ingress
+  namespace: risklens
+  annotations:
+    # GKE managed TLS certificate (replace with your domain)
+    networking.gke.io/managed-certificates: risklens-cert
+    # GKE native HTTP(S) load balancer
+    kubernetes.io/ingress.class: "gce"
+    # Reserve a static IP (created by setup_gke.sh)
+    kubernetes.io/ingress.global-static-ip-name: risklens-ip
+spec:
+  rules:
+    - host: risklens.example.com   # replace with your domain
+      http:
+        paths:
+          # API routes go directly to the FastAPI service
+          - path: /assets
+            pathType: Prefix
+            backend:
+              service:
+                name: risklens-api
+                port:
+                  number: 8000
+          - path: /lineage
+            pathType: Prefix
+            backend:
+              service:
+                name: risklens-api
+                port:
+                  number: 8000
+          - path: /governance
+            pathType: Prefix
+            backend:
+              service:
+                name: risklens-api
+                port:
+                  number: 8000
+          - path: /search
+            pathType: Prefix
+            backend:
+              service:
+                name: risklens-api
+                port:
+                  number: 8000
+          - path: /chat
+            pathType: Prefix
+            backend:
+              service:
+                name: risklens-api
+                port:
+                  number: 8000
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: risklens-api
+                port:
+                  number: 8000
+          # Everything else → React SPA
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: risklens-frontend
+                port:
+                  number: 80
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: risklens-cert
+  namespace: risklens
+spec:
+  domains:
+    - risklens.example.com   # replace with your domain

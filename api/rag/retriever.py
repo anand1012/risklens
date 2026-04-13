@@ -12,7 +12,6 @@ which the LangGraph chain uses to build context for Claude.
 """
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Optional
 

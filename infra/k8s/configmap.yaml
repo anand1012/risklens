@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: risklens-config
+  namespace: risklens
+data:
+  GCP_PROJECT: "risklens-frtb-2026"
+  GCS_BUCKET: "risklens-frtb-2026-indexes"
+  LANGCHAIN_PROJECT: "risklens"
+  LANGCHAIN_TRACING_V2: "true"

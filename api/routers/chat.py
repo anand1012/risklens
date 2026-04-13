@@ -13,7 +13,6 @@ SSE event format:
 Also logs each chat query to risklens_catalog.access_log for analytics.
 """
 
-import json
 import os
 import uuid
 from datetime import datetime, timezone
