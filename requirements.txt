@@ -13,12 +13,12 @@ fredapi==0.5.1
 requests==2.31.0
 
 # AI / RAG
-langchain==0.2.16
-langchain-anthropic==0.2.4
-langchain-community==0.2.16
-langchain-google-community==1.0.7
-langgraph==0.1.19
-langsmith==0.1.98
+langchain==0.3.20
+langchain-anthropic==0.3.10
+langchain-community==0.3.19
+langchain-google-community==2.0.7
+langgraph==0.2.73
+langsmith==0.2.10
 google-cloud-aiplatform==1.57.0
 rank-bm25==0.2.2
 
