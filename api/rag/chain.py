@@ -76,7 +76,6 @@ async def stream_answer(
     project: str,
     top_k: int = 8,
     anthropic_api_key: Optional[str] = None,
-    cohere_api_key: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Retrieve context then stream Claude's answer token by token.
@@ -86,7 +85,7 @@ async def stream_answer(
     if not ant_key:
         raise ValueError("ANTHROPIC_API_KEY not set")
 
-    # Retrieve
+    # Retrieve (Vertex AI embeddings use Workload Identity — no extra key)
     docs = retrieve(
         query=query,
         bm25_index=bm25_index,
@@ -94,7 +93,6 @@ async def stream_answer(
         bq_client=bq_client,
         project=project,
         top_k=top_k,
-        cohere_api_key=cohere_api_key,
     )
     logger.info("Retrieved %d docs for query: %.80s", len(docs), query)
 
@@ -168,7 +166,6 @@ async def answer(
     project: str,
     top_k: int = 8,
     anthropic_api_key: Optional[str] = None,
-    cohere_api_key: Optional[str] = None,
 ) -> dict:
     """Returns {"answer": str, "sources": list[dict]}"""
     ant_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
@@ -182,7 +179,6 @@ async def answer(
         bq_client=bq_client,
         project=project,
         top_k=top_k,
-        cohere_api_key=cohere_api_key,
     )
 
     context_block = _build_context_block(docs)

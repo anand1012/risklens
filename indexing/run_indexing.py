@@ -1,6 +1,6 @@
 """
 RiskLens — Indexing Pipeline Runner
-Orchestrates: chunk → embed → bm25
+Orchestrates: chunk → embed (Vertex AI) → bm25
 
 Usage:
     python -m indexing.run_indexing \
@@ -8,13 +8,12 @@ Usage:
         --bucket  risklens-frtb-2026-indexes \
         [--truncate]
 
-Environment variables:
-    COHERE_API_KEY  — required
+Requires GCP Application Default Credentials (ADC) or Workload Identity.
+No API keys needed — Vertex AI uses IAM authentication.
 """
 
 import argparse
 import logging
-import os
 import sys
 
 logging.basicConfig(
@@ -36,10 +35,6 @@ def main() -> None:
         help="Truncate BQ embedding tables before inserting (full refresh)",
     )
     args = parser.parse_args()
-
-    if not os.environ.get("COHERE_API_KEY"):
-        logger.error("COHERE_API_KEY environment variable is not set.")
-        sys.exit(1)
 
     # ── Step 1: chunk ────────────────────────────────────────────────────────
     logger.info("=== Step 1/3: Chunking BigQuery metadata ===")

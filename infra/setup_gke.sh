@@ -73,7 +73,8 @@ for ROLE in \
     roles/bigquery.dataEditor \
     roles/bigquery.jobUser \
     roles/storage.objectAdmin \
-    roles/secretmanager.secretAccessor; do
+    roles/secretmanager.secretAccessor \
+    roles/aiplatform.user; do
     gcloud projects add-iam-policy-binding "$PROJECT" \
         --member="serviceAccount:${GCP_SA_EMAIL}" \
         --role="$ROLE" \

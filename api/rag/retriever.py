@@ -13,8 +13,6 @@ which the LangGraph chain uses to build context for Claude.
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
-
 from google.cloud import bigquery
 
 from indexing.bm25_index import BM25Okapi, ChunkDoc, search as bm25_search
@@ -120,19 +118,17 @@ def retrieve(
     bq_client: bigquery.Client,
     project: str,
     top_k: int = _DEFAULT_TOP_K,
-    cohere_api_key: Optional[str] = None,
 ) -> list[RetrievedDoc]:
     """
     Hybrid retrieve: BM25 + BQ vector search → RRF merge.
 
     Args:
-        query:          Natural language question from the user
-        bm25_index:     Loaded BM25Okapi (from app.state)
-        corpus:         List of ChunkDocs matching the BM25 index (from app.state)
-        bq_client:      BigQuery client (from app.state)
-        project:        GCP project ID
-        top_k:          Number of docs to return
-        cohere_api_key: Cohere API key (falls back to env var)
+        query:      Natural language question from the user
+        bm25_index: Loaded BM25Okapi (from app.state)
+        corpus:     List of ChunkDocs matching the BM25 index (from app.state)
+        bq_client:  BigQuery client (from app.state)
+        project:    GCP project ID
+        top_k:      Number of docs to return
 
     Returns:
         List of RetrievedDoc sorted by RRF score descending
@@ -142,8 +138,8 @@ def retrieve(
     # BM25 retrieval
     bm25_results = bm25_search(bm25_index, corpus, query, top_k=fetch_k)
 
-    # Vector retrieval
-    query_emb = embed_query(query, cohere_api_key=cohere_api_key)
+    # Vector retrieval (Vertex AI embed_query uses Workload Identity — no key needed)
+    query_emb = embed_query(query, project=project)
     vector_results = _bq_vector_search(query_emb, project, fetch_k, bq_client)
 
     # Build corpus lookup

@@ -133,15 +133,12 @@ jobs:
         run: |
           ANTHROPIC=$(gcloud secrets versions access latest \
             --secret=risklens-anthropic-api-key --project=${{ env.PROJECT }})
-          COHERE=$(gcloud secrets versions access latest \
-            --secret=risklens-cohere-api-key --project=${{ env.PROJECT }})
           LANGSMITH=$(gcloud secrets versions access latest \
             --secret=risklens-langsmith-api-key --project=${{ env.PROJECT }})
 
           kubectl create secret generic risklens-secrets \
             --namespace=${{ env.NAMESPACE }} \
             --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC" \
-            --from-literal=COHERE_API_KEY="$COHERE" \
             --from-literal=LANGCHAIN_API_KEY="$LANGSMITH" \
             --dry-run=client -o yaml | kubectl apply -f -
 

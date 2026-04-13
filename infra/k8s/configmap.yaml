@@ -5,6 +5,7 @@ metadata:
   namespace: risklens
 data:
   GCP_PROJECT: "risklens-frtb-2026"
+  GCP_REGION: "us-central1"
   GCS_BUCKET: "risklens-frtb-2026-indexes"
   LANGCHAIN_PROJECT: "risklens"
   LANGCHAIN_TRACING_V2: "true"
