@@ -8,77 +8,107 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
-  addEdge,
   type Node,
   type Edge,
   type Connection,
   MarkerType,
+  Position,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import dagre from '@dagrejs/dagre'
 import { fetchLineageGraph } from '../api'
 import type { LineageNode } from '../types'
-import { LayerBadge, DomainBadge } from '../components/Badges'
 
-const LAYER_COLOR: Record<string, string> = {
-  bronze: '#92400e',
-  silver: '#334155',
-  gold:   '#78350f',
-}
-const TYPE_SHAPE: Record<string, string> = {
-  source:   '◉',
-  pipeline: '⬡',
-  table:    '◻',
-  report:   '◈',
+// ── Node dimensions used by dagre ──────────────────────────────────────────
+const NODE_W = 210
+const NODE_H = 72
+
+// ── Layer border colours ────────────────────────────────────────────────────
+const LAYER_BORDER: Record<string, string> = {
+  bronze: '#b45309',
+  silver: '#64748b',
+  gold:   '#d97706',
 }
 
-function toFlow(nodes: LineageNode[], rawEdges: import('../types').LineageEdge[]) {
-  const cols = 3
-  const flowNodes: Node[] = nodes.map((n, i) => ({
-    id: n.node_id,
-    position: { x: (i % cols) * 280, y: Math.floor(i / cols) * 130 },
-    data: { label: <NodeLabel node={n} /> },
-    style: {
-      background: LAYER_COLOR[n.layer] ?? '#1e293b',
-      border: '1px solid #334155',
-      borderRadius: 10,
-      padding: '8px 12px',
-      color: '#f1f5f9',
-      fontSize: 12,
-      minWidth: 180,
-    },
-  }))
+// ── Run dagre LR layout and return positioned RF nodes + edges ─────────────
+function applyDagreLayout(
+  nodes: LineageNode[],
+  rawEdges: import('../types').LineageEdge[],
+) {
+  const g = new dagre.graphlib.Graph()
+  g.setDefaultEdgeLabel(() => ({}))
+  g.setGraph({ rankdir: 'LR', nodesep: 50, ranksep: 100, marginx: 40, marginy: 40 })
+
+  nodes.forEach((n) => g.setNode(n.node_id, { width: NODE_W, height: NODE_H }))
+  rawEdges.forEach((e) => g.setEdge(e.from_node_id, e.to_node_id))
+  dagre.layout(g)
+
+  const flowNodes: Node[] = nodes.map((n) => {
+    const pos = g.node(n.node_id)
+    return {
+      id: n.node_id,
+      position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      data: { label: <NodeCard node={n} /> },
+      style: {
+        background: '#0f172a',
+        border: `1.5px solid ${LAYER_BORDER[n.layer] ?? '#334155'}`,
+        borderRadius: 10,
+        padding: '10px 14px',
+        color: '#f1f5f9',
+        fontSize: 12,
+        width: NODE_W,
+        minHeight: NODE_H,
+      },
+    }
+  })
 
   const flowEdges: Edge[] = rawEdges.map((e) => ({
     id: e.edge_id,
     source: e.from_node_id,
     target: e.to_node_id,
-    label: e.relationship,
+    type: 'smoothstep',
     animated: true,
+    label: e.relationship,
+    labelStyle: { fill: '#64748b', fontSize: 10, fontFamily: 'monospace' },
+    labelBgStyle: { fill: '#0f172a', fillOpacity: 0.85 },
     style: { stroke: '#6366f1', strokeWidth: 1.5 },
-    labelStyle: { fill: '#94a3b8', fontSize: 10 },
     markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
   }))
 
   return { flowNodes, flowEdges }
 }
 
-function NodeLabel({ node }: { node: LineageNode }) {
+// ── Node card component ────────────────────────────────────────────────────
+function NodeCard({ node }: { node: LineageNode }) {
+  const typeIcon: Record<string, string> = {
+    source: '◉', pipeline: '⬡', table: '◻', report: '◈', model: '⬠',
+  }
+  const layerColor: Record<string, string> = {
+    bronze: 'text-amber-600', silver: 'text-slate-400', gold: 'text-yellow-600',
+  }
   return (
     <div>
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className="text-brand-400">{TYPE_SHAPE[node.type] ?? '◻'}</span>
-        <span className="font-mono text-xs font-semibold text-slate-100 truncate max-w-[140px]">{node.name}</span>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span className="text-brand-400 text-sm">{typeIcon[node.type] ?? '◻'}</span>
+        <span className="font-mono text-xs font-semibold text-slate-100 truncate max-w-[150px]">
+          {node.name}
+        </span>
       </div>
-      <div className="flex gap-1">
-        <span className="badge bg-slate-700/80 text-slate-400 text-[10px]">{node.layer}</span>
-        <span className="badge bg-slate-700/80 text-slate-400 text-[10px]">{node.domain}</span>
+      <div className="flex gap-1.5">
+        <span className={`text-[10px] font-medium ${layerColor[node.layer] ?? 'text-slate-500'}`}>
+          {node.layer}
+        </span>
+        <span className="text-[10px] text-slate-500">·</span>
+        <span className="text-[10px] text-slate-500">{node.domain}</span>
       </div>
     </div>
   )
 }
 
+// ── Main view ──────────────────────────────────────────────────────────────
 export default function Lineage() {
-  // ReactFlow needs an explicit pixel height on its container — flex-1 alone isn't enough
   const { assetId } = useParams<{ assetId: string }>()
   const navigate = useNavigate()
   const [hops, setHops] = useState(2)
@@ -92,17 +122,16 @@ export default function Lineage() {
   })
 
   const { flowNodes, flowEdges } = graph
-    ? toFlow(graph.nodes, graph.edges)
+    ? applyDagreLayout(graph.nodes, graph.edges)
     : { flowNodes: [], flowEdges: [] }
 
   const [nodes, , onNodesChange] = useNodesState(flowNodes)
   const [edges, , onEdgesChange] = useEdgesState(flowEdges)
 
-  // Re-init when graph changes
   const rfNodes = graph ? flowNodes : nodes
   const rfEdges = graph ? flowEdges : edges
 
-  const onConnect = useCallback((c: Connection) => {}, [])
+  const onConnect = useCallback((_c: Connection) => {}, [])
 
   return (
     <div className="flex flex-col" style={{ height: '100%', minHeight: '100vh' }}>
@@ -143,7 +172,7 @@ export default function Lineage() {
         </div>
       </div>
 
-      {/* Flow canvas — needs explicit height for ReactFlow to render */}
+      {/* Canvas */}
       <div className="flex-1 relative" style={{ minHeight: 0, height: '100%' }}>
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center text-slate-500 z-10">
@@ -160,6 +189,7 @@ export default function Lineage() {
             Enter an asset ID above to explore lineage.
           </div>
         )}
+
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
@@ -167,16 +197,23 @@ export default function Lineage() {
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           fitView
+          fitViewOptions={{ padding: 0.15 }}
           className="bg-slate-950"
           proOptions={{ hideAttribution: true }}
         >
-          <Background color="#334155" gap={24} size={1} />
+          <Background color="#1e293b" gap={24} size={1} />
           <Controls className="[&>button]:bg-slate-800 [&>button]:border-slate-700 [&>button]:text-slate-300" />
           <MiniMap
-            nodeColor={(n) => (n.style?.background as string) ?? '#1e293b'}
+            nodeColor={(n) => {
+              const border = (n.style?.border as string) ?? ''
+              return border.includes('#b45309') ? '#92400e'
+                   : border.includes('#d97706') ? '#78350f'
+                   : '#334155'
+            }}
             className="bg-slate-900 border border-slate-800 rounded-xl"
           />
         </ReactFlow>
+
         {graph && (
           <div className="absolute top-4 left-4 card text-xs space-y-1 pointer-events-none">
             <div className="text-slate-500 font-semibold mb-2">Graph stats</div>
