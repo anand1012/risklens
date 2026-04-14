@@ -49,6 +49,13 @@ echo "Date     : $TODAY"
 echo "Cluster  : $CLUSTER_NAME"
 echo ""
 
+# ── Upload init script + Spark jobs (must be in GCS before cluster starts) ────
+echo "--- Uploading init script and Spark jobs ---"
+gcloud storage cp scripts/dataproc_init.sh        "gs://${BUCKET_NAME}/scripts/"
+gcloud storage cp ingestion/jobs/*.py              "gs://${BUCKET_NAME}/jobs/"
+gcloud storage cp ingestion/synthetic/generate.py  "gs://${BUCKET_NAME}/jobs/"
+echo "  Jobs uploaded."
+
 # ── Create ephemeral Dataproc cluster ─────────────────────────────────────────
 echo "--- Creating Dataproc cluster ---"
 gcloud dataproc clusters create "$CLUSTER_NAME" \
@@ -58,15 +65,9 @@ gcloud dataproc clusters create "$CLUSTER_NAME" \
   --master-boot-disk-size=100 \
   --image-version="2.1-debian11" \
   --service-account="risklens-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --properties="dataproc:pip.packages=fredapi==0.5.0 yfinance==0.2.55" \
+  --initialization-actions="gs://${BUCKET_NAME}/scripts/dataproc_init.sh" \
   --quiet
 echo "  Cluster ready: $CLUSTER_NAME"
-
-# ── Upload Spark jobs to GCS ──────────────────────────────────────────────────
-echo "--- Uploading Spark jobs ---"
-gcloud storage cp ingestion/jobs/*.py          "gs://${BUCKET_NAME}/jobs/"
-gcloud storage cp ingestion/synthetic/generate.py "gs://${BUCKET_NAME}/jobs/"
-echo "  Jobs uploaded."
 
 # ── Helper: submit and optionally wait ───────────────────────────────────────
 submit_job() {
