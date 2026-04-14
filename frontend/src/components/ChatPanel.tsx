@@ -133,9 +133,19 @@ export default function ChatPanel({ open, onClose }: Props) {
                 <div className="max-w-full space-y-2">
                   <div className="bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 text-sm
                                   text-slate-200 whitespace-pre-wrap leading-relaxed">
-                    {msg.content}
-                    {msg.streaming && (
-                      <span className="inline-block w-1.5 h-4 bg-brand-500 ml-1 animate-pulse align-middle" />
+                    {msg.streaming && msg.content === '' ? (
+                      <span className="flex items-center gap-1 h-5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-bounce [animation-delay:0ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-bounce [animation-delay:150ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-bounce [animation-delay:300ms]" />
+                      </span>
+                    ) : (
+                      <>
+                        {msg.content}
+                        {msg.streaming && (
+                          <span className="inline-block w-1.5 h-4 bg-brand-500 ml-1 animate-pulse align-middle" />
+                        )}
+                      </>
                     )}
                   </div>
                   {msg.sources && msg.sources.length > 0 && !msg.streaming && (

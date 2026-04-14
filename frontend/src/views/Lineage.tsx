@@ -78,6 +78,7 @@ function NodeLabel({ node }: { node: LineageNode }) {
 }
 
 export default function Lineage() {
+  // ReactFlow needs an explicit pixel height on its container — flex-1 alone isn't enough
   const { assetId } = useParams<{ assetId: string }>()
   const navigate = useNavigate()
   const [hops, setHops] = useState(2)
@@ -104,7 +105,7 @@ export default function Lineage() {
   const onConnect = useCallback((c: Connection) => {}, [])
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col" style={{ height: '100vh' }}>
       {/* Header */}
       <div className="px-6 py-5 border-b border-slate-800 flex items-center gap-4">
         <div>
@@ -142,8 +143,8 @@ export default function Lineage() {
         </div>
       </div>
 
-      {/* Flow canvas */}
-      <div className="flex-1 relative">
+      {/* Flow canvas — needs explicit height for ReactFlow to render */}
+      <div className="flex-1 relative" style={{ minHeight: 0, height: '100%' }}>
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center text-slate-500 z-10">
             Loading lineage graph…
