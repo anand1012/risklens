@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { streamChat } from '../api'
 import type { ChatMessage, ChatSource } from '../types'
 
@@ -149,6 +150,7 @@ export default function ChatPanel({ open, onClose }: Props) {
                     ) : (
                       <div className="prose-chat">
                         <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
                           components={{
                             p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
                             strong: ({ children }) => <strong className="text-slate-100 font-semibold">{children}</strong>,
