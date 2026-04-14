@@ -94,11 +94,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(catalog.router)
-app.include_router(lineage.router)
-app.include_router(governance.router)
-app.include_router(search.router)
-app.include_router(chat.router)
+app.include_router(catalog.router, prefix="/api")
+app.include_router(lineage.router, prefix="/api")
+app.include_router(governance.router, prefix="/api")
+app.include_router(search.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
 
 
 @app.get("/health", tags=["meta"])

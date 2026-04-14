@@ -12,35 +12,7 @@ spec:
     - host: risklens.preciseguess.com
       http:
         paths:
-          - path: /assets
-            pathType: Prefix
-            backend:
-              service:
-                name: risklens-api
-                port:
-                  number: 8000
-          - path: /lineage
-            pathType: Prefix
-            backend:
-              service:
-                name: risklens-api
-                port:
-                  number: 8000
-          - path: /governance
-            pathType: Prefix
-            backend:
-              service:
-                name: risklens-api
-                port:
-                  number: 8000
-          - path: /search
-            pathType: Prefix
-            backend:
-              service:
-                name: risklens-api
-                port:
-                  number: 8000
-          - path: /chat
+          - path: /api
             pathType: Prefix
             backend:
               service:

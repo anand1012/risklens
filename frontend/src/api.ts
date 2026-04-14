@@ -3,7 +3,7 @@ import type {
   LineageGraph, SlaRecord, OwnershipRecord, QualityScore, SearchResult,
 } from './types'
 
-const BASE = ''
+const BASE = '/api'
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`)
