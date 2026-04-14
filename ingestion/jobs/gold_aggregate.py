@@ -459,7 +459,7 @@ def build_plat_results(spark: SparkSession, project: str,
 
     # Aggregate over the 12-month window available in silver
     # In production: window over 250 trading days of daily P&L observations
-    pnl_all = read_silver(spark, project, "risk_outputs", None)  # full history
+    pnl_all = read_silver(spark, project, "risk_enriched", None)  # full history
 
     window_agg = pnl_all.groupBy("desk").agg(
         F.count("calc_date").alias("observation_count"),
