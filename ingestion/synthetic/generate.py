@@ -70,6 +70,7 @@ ASSETS = [
     {"asset_id": "silver_rates",          "name": "Rates (Cleaned)",               "domain": "market_data",  "layer": "silver"},
     {"asset_id": "silver_prices",         "name": "Prices (Cleaned)",              "domain": "market_data",  "layer": "silver"},
     {"asset_id": "silver_risk_outputs",   "name": "Risk Outputs (Cleaned)",        "domain": "risk",         "layer": "silver"},
+    {"asset_id": "silver_risk_enriched",  "name": "Risk Outputs with Market Context", "domain": "risk",      "layer": "silver"},
     # Gold
     {"asset_id": "gold_trade_positions",  "name": "Enriched Trade Positions",            "domain": "risk",       "layer": "gold"},
     {"asset_id": "gold_backtesting",      "name": "VaR Back-Testing + Traffic Light",    "domain": "risk",       "layer": "gold"},
@@ -94,6 +95,7 @@ ASSET_DESCRIPTIONS = {
     "silver_rates":          "Cleaned FRED rate series. Outliers flagged, gaps forward-filled, schema normalized to standard time-series format.",
     "silver_prices":         "Cleaned Yahoo Finance prices. OHLCV validated, split-adjusted, schema normalized. Instruments mapped to internal instrument IDs.",
     "silver_risk_outputs":   "Cleaned risk outputs. VaR and ES values validated against historical bounds. P&L vector dimension checks passed.",
+    "silver_risk_enriched":  "Risk outputs enriched with market context (SOFR, VIX, HY spread) from silver_rates. Produced by silver_enrich.py. Used as primary input to gold ES and back-testing calculations.",
     "gold_trade_positions":  "Enriched trade positions joining silver_trades with silver_prices and silver_rates. Includes present value using SOFR discount curve. Input to ES and PLAT calculations.",
     "gold_backtesting":      "VaR 99% 1-day back-testing results per desk (BCBS 457 ¶351-368). Compares modeled VaR against hypothetical and actual P&L over a rolling 250-day window. Assigns traffic light zone (GREEN/AMBER/RED) and capital multiplier. NOTE: VaR is for back-testing ONLY; ES 97.5% is the regulatory capital metric.",
     "gold_es_outputs":       "Expected Shortfall 97.5% per desk, risk class, and liquidity horizon (BCBS 457 ¶21-34). Each desk maps to its FRTB risk class (GIRR/FX/CSR_NS/EQ/COMM) with risk-class-specific liquidity horizon scaling (10-40 days). This is the primary regulatory capital metric under FRTB IMA.",
@@ -109,36 +111,43 @@ ASSET_DESCRIPTIONS = {
 
 LINEAGE_EDGES = [
     # Bronze ingestion
-    ("dtcc_sdr_source",    "bronze_dtcc_trades",    "feeds",      "bronze_trades_job"),
-    ("fred_api_source",    "bronze_fred_rates",     "feeds",      "bronze_rates_job"),
-    ("yahoo_api_source",   "bronze_yahoo_prices",   "feeds",      "bronze_prices_job"),
+    ("dtcc_sdr_source",     "bronze_dtcc_trades",    "feeds",      "bronze_trades_job"),
+    ("fred_api_source",     "bronze_fred_rates",     "feeds",      "bronze_rates_job"),
+    ("yahoo_api_source",    "bronze_yahoo_prices",   "feeds",      "bronze_prices_job"),
+    # Reference tables feed into silver transforms
+    ("ref_counterparty",    "silver_trades",         "enriches",   "silver_transform_job"),
+    ("ref_instrument_master","silver_trades",        "enriches",   "silver_transform_job"),
+    ("ref_currency",        "gold_trade_positions",  "enriches",   "gold_aggregate_job"),
     # Silver transforms
-    ("bronze_dtcc_trades", "silver_trades",         "transforms", "silver_transform_job"),
-    ("bronze_fred_rates",  "silver_rates",          "transforms", "silver_transform_job"),
-    ("bronze_yahoo_prices","silver_prices",         "transforms", "silver_transform_job"),
-    ("bronze_risk_outputs","silver_risk_outputs",   "transforms", "silver_transform_job"),
+    ("bronze_dtcc_trades",  "silver_trades",         "transforms", "silver_transform_job"),
+    ("bronze_fred_rates",   "silver_rates",          "transforms", "silver_transform_job"),
+    ("bronze_yahoo_prices", "silver_prices",         "transforms", "silver_transform_job"),
+    ("bronze_risk_outputs", "silver_risk_outputs",   "transforms", "silver_transform_job"),
+    # Silver enrich: risk_outputs × rates → risk_enriched
+    ("silver_risk_outputs", "silver_risk_enriched",  "enriches",   "silver_enrich_job"),
+    ("silver_rates",        "silver_risk_enriched",  "enriches",   "silver_enrich_job"),
     # Gold: trade positions
-    ("silver_trades",      "gold_trade_positions",  "aggregates", "gold_aggregate_job"),
-    ("silver_prices",      "gold_trade_positions",  "aggregates", "gold_aggregate_job"),
-    ("silver_rates",       "gold_trade_positions",  "aggregates", "gold_aggregate_job"),
-    # Gold: back-testing (VaR 99%, traffic light)
-    ("silver_risk_outputs","gold_backtesting",      "aggregates", "gold_aggregate_job"),
-    # Gold: ES outputs (risk class × liquidity horizon)
-    ("silver_risk_outputs","gold_es_outputs",       "aggregates", "gold_aggregate_job"),
+    ("silver_trades",       "gold_trade_positions",  "aggregates", "gold_aggregate_job"),
+    ("silver_prices",       "gold_trade_positions",  "aggregates", "gold_aggregate_job"),
+    ("silver_rates",        "gold_trade_positions",  "aggregates", "gold_aggregate_job"),
+    # Gold: back-testing (VaR 99%, traffic light) — uses enriched risk data
+    ("silver_risk_enriched","gold_backtesting",      "aggregates", "gold_aggregate_job"),
+    # Gold: ES outputs (risk class × liquidity horizon) — uses enriched risk data
+    ("silver_risk_enriched","gold_es_outputs",       "aggregates", "gold_aggregate_job"),
     # Gold: P&L vectors (hypothetical + actual)
-    ("silver_risk_outputs","gold_pnl_vectors",      "aggregates", "gold_aggregate_job"),
+    ("silver_risk_outputs", "gold_pnl_vectors",      "aggregates", "gold_aggregate_job"),
     # Gold: PLAT results (reads pnl_vectors)
-    ("gold_pnl_vectors",   "gold_plat_results",     "aggregates", "gold_aggregate_job"),
+    ("gold_pnl_vectors",    "gold_plat_results",     "aggregates", "gold_aggregate_job"),
     # Gold: capital charge (ES × multiplier)
-    ("gold_es_outputs",    "gold_capital_charge",   "aggregates", "gold_aggregate_job"),
-    ("gold_backtesting",   "gold_capital_charge",   "aggregates", "gold_aggregate_job"),
+    ("gold_es_outputs",     "gold_capital_charge",   "aggregates", "gold_aggregate_job"),
+    ("gold_backtesting",    "gold_capital_charge",   "aggregates", "gold_aggregate_job"),
     # Gold: RFET (reads bronze rates observation counts)
-    ("bronze_fred_rates",  "gold_rfet_results",     "aggregates", "gold_aggregate_job"),
+    ("bronze_fred_rates",   "gold_rfet_results",     "aggregates", "gold_aggregate_job"),
     # Gold: risk summary (consolidated view)
-    ("gold_backtesting",   "gold_risk_summary",     "aggregates", "gold_aggregate_job"),
-    ("gold_es_outputs",    "gold_risk_summary",     "aggregates", "gold_aggregate_job"),
-    ("gold_plat_results",  "gold_risk_summary",     "aggregates", "gold_aggregate_job"),
-    ("gold_capital_charge","gold_risk_summary",     "aggregates", "gold_aggregate_job"),
+    ("gold_backtesting",    "gold_risk_summary",     "aggregates", "gold_aggregate_job"),
+    ("gold_es_outputs",     "gold_risk_summary",     "aggregates", "gold_aggregate_job"),
+    ("gold_plat_results",   "gold_risk_summary",     "aggregates", "gold_aggregate_job"),
+    ("gold_capital_charge", "gold_risk_summary",     "aggregates", "gold_aggregate_job"),
 ]
 
 LINEAGE_NODES = [
