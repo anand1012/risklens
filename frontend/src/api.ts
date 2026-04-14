@@ -1,7 +1,7 @@
 import type {
   Asset, AssetDetail, SchemaColumn,
   LineageGraph, SlaRecord, OwnershipRecord, QualityScore, SearchResult,
-  RiskSummaryRow, CapitalChargeRow, BacktestingRow, PlatRow, RfetRow, EsRow,
+  RiskSummaryRow, CapitalChargeRow, BacktestingRow, PlatRow, RfetRow, EsRow, TrendRow,
 } from './types'
 
 const BASE = '/api'
@@ -58,12 +58,18 @@ export const fetchCapitalCharge = (trade_date?: string, risk_class?: string) => 
   if (risk_class)  q.set('risk_class', risk_class)
   return get<CapitalChargeRow[]>(`/risk/capital${q.size ? `?${q}` : ''}`)
 }
-export const fetchBacktesting = (trade_date?: string, zone?: string) => {
+export const fetchBacktesting = (trade_date?: string, zone?: string, calc_date?: string) => {
   const q = new URLSearchParams()
+  if (calc_date)  q.set('calc_date', calc_date)
   if (trade_date) q.set('trade_date', trade_date)
   if (zone)       q.set('zone', zone)
   return get<BacktestingRow[]>(`/risk/backtesting${q.size ? `?${q}` : ''}`)
 }
+
+export const fetchDates = (table = 'backtesting') =>
+  get<string[]>(`/risk/dates?table=${table}`)
+
+export const fetchTrend = () => get<TrendRow[]>('/risk/trend')
 export const fetchPlat = (trade_date?: string) => {
   const q = new URLSearchParams()
   if (trade_date) q.set('trade_date', trade_date)

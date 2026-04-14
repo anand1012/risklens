@@ -17,16 +17,38 @@ interface Props {
   onClose: () => void
 }
 
+const STORAGE_KEY = 'risklens-chat-v1'
+
 export default function ChatPanel({ open, onClose }: Props) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY)
+      return raw ? (JSON.parse(raw) as ChatMessage[]) : []
+    } catch {
+      return []
+    }
+  })
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const cancelRef = useRef<(() => void) | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // Persist non-streaming messages to sessionStorage
+  useEffect(() => {
+    try {
+      const toSave = messages.filter((m) => !m.streaming)
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
+    } catch {}
+  }, [messages])
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const clearChat = () => {
+    setMessages([])
+    try { sessionStorage.removeItem(STORAGE_KEY) } catch {}
+  }
 
   const sendQuery = useCallback((query: string) => {
     if (!query.trim() || busy) return
@@ -103,7 +125,18 @@ export default function ChatPanel({ open, onClose }: Props) {
             <span className="font-semibold text-slate-100">RiskLens AI</span>
             <p className="text-xs text-slate-500 mt-0.5">Powered by Claude</p>
           </div>
-          <button onClick={onClose} className="btn-ghost text-lg leading-none">✕</button>
+          <div className="flex items-center gap-2">
+            {messages.length > 0 && (
+              <button
+                onClick={clearChat}
+                className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1 rounded transition-colors"
+                title="Clear chat history"
+              >
+                Clear
+              </button>
+            )}
+            <button onClick={onClose} className="btn-ghost text-lg leading-none">✕</button>
+          </div>
         </div>
 
         {/* Messages */}

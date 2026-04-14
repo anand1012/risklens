@@ -12,47 +12,68 @@ const NAV = [
 
 export default function Layout() {
   const [chatOpen, setChatOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => window.innerWidth < 768)
 
   return (
     <div className="flex h-full overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-56 flex-shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col">
-        <div className="px-5 py-5 border-b border-slate-800">
-          <span className="text-brand-500 font-bold text-lg tracking-tight">RiskLens</span>
-          <p className="text-slate-500 text-xs mt-0.5">FRTB Data Catalog</p>
+      <aside
+        className={`${collapsed ? 'w-14' : 'w-56'} flex-shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col transition-all duration-200 overflow-hidden`}
+      >
+        {/* Logo + toggle */}
+        <div className={`py-4 border-b border-slate-800 flex items-center ${collapsed ? 'justify-center px-2' : 'justify-between px-4'}`}>
+          {!collapsed && (
+            <div className="min-w-0">
+              <span className="text-brand-500 font-bold text-lg tracking-tight">RiskLens</span>
+              <p className="text-slate-500 text-xs mt-0.5">FRTB Data Catalog</p>
+            </div>
+          )}
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="text-slate-500 hover:text-slate-300 p-1 rounded-md hover:bg-slate-800 transition-colors flex-shrink-0"
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? '→' : '←'}
+          </button>
         </div>
-        <nav className="flex-1 px-3 py-4 space-y-1">
+
+        {/* Nav */}
+        <nav className="flex-1 px-2 py-4 space-y-1">
           {NAV.map(({ to, label, icon }) => (
             <NavLink
               key={to}
               to={to}
               end={to === '/'}
+              title={collapsed ? label : undefined}
               className={({ isActive }) =>
-                `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                `flex items-center ${collapsed ? 'justify-center' : 'gap-2.5'} px-2 py-2 rounded-lg text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-brand-600/20 text-brand-400'
                     : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
                 }`
               }
             >
-              <span className="text-base">{icon}</span>
-              {label}
+              <span className="text-base flex-shrink-0">{icon}</span>
+              {!collapsed && label}
             </NavLink>
           ))}
         </nav>
-        <div className="px-3 pb-4">
+
+        {/* AI Chat button */}
+        <div className="px-2 pb-4">
           <button
             onClick={() => setChatOpen(true)}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium
-                       bg-brand-600 hover:bg-brand-700 text-white transition-colors"
+            title={collapsed ? 'Ask RiskLens AI' : undefined}
+            className={`w-full flex items-center ${collapsed ? 'justify-center' : 'gap-2.5'} px-2 py-2 rounded-lg text-sm font-medium
+                       bg-brand-600 hover:bg-brand-700 text-white transition-colors`}
           >
-            <span>✦</span>
-            Ask RiskLens AI
+            <span className="flex-shrink-0">✦</span>
+            {!collapsed && 'Ask RiskLens AI'}
           </button>
         </div>
       </aside>
 
-      {/* Main content — overflow-hidden so each view controls its own scroll */}
+      {/* Main content */}
       <main className="flex-1 overflow-hidden min-h-0 flex flex-col">
         <Outlet />
       </main>

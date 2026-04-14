@@ -96,18 +96,57 @@ def get_capital_charge(
     return query_rows(sql)
 
 
+@router.get("/dates")
+def get_available_dates(
+    table: str = Query("backtesting", description="gold table name"),
+):
+    """Distinct calc_dates for a gold table, newest first (for date pickers)."""
+    p = project()
+    allowed = {"backtesting", "es_outputs", "capital_charge", "plat_results", "risk_summary"}
+    if table not in allowed:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"table must be one of {sorted(allowed)}")
+    sql = f"""
+        SELECT DISTINCT CAST(calc_date AS STRING) AS date
+        FROM `{p}.risklens_gold.{table}`
+        ORDER BY 1 DESC LIMIT 120
+    """
+    return [r["date"] for r in query_rows(sql)]
+
+
+@router.get("/trend")
+def get_risk_trend(limit: int = Query(90, le=365)):
+    """Daily total capital charge + ES trend across all desks (for chart)."""
+    p = project()
+    sql = f"""
+        SELECT
+            CAST(calc_date AS STRING) AS calc_date,
+            SUM(capital_charge_usd)   AS total_capital_usd,
+            SUM(es_975_scaled)        AS total_es_scaled,
+            MAX(traffic_light_zone)   AS worst_zone
+        FROM `{p}.risklens_gold.risk_summary`
+        WHERE desk != 'FIRM'
+        GROUP BY calc_date
+        ORDER BY calc_date ASC
+        LIMIT {limit}
+    """
+    return query_rows(sql)
+
+
 @router.get("/backtesting")
 def get_backtesting(
-    trade_date: str | None = Query(None),
+    calc_date: str | None = Query(None, description="YYYY-MM-DD calc date (preferred)"),
+    trade_date: str | None = Query(None, description="pipeline run date (legacy)"),
     zone: str | None = Query(None, description="GREEN | AMBER | RED"),
 ):
     """VaR 99% back-testing exceptions and traffic light zone per desk."""
     p = project()
-    date_filter = (
-        f"trade_date = '{trade_date}'"
-        if trade_date
-        else f"trade_date = (SELECT MAX(trade_date) FROM `{p}.risklens_gold.backtesting`)"
-    )
+    if calc_date:
+        date_filter = f"calc_date = '{calc_date}'"
+    elif trade_date:
+        date_filter = f"trade_date = '{trade_date}'"
+    else:
+        date_filter = f"calc_date = (SELECT MAX(calc_date) FROM `{p}.risklens_gold.backtesting`)"
     zone_filter = f"AND traffic_light_zone = '{zone.upper()}'" if zone else ""
 
     sql = f"""

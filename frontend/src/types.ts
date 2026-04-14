@@ -218,6 +218,13 @@ export interface EsRow {
   trade_date: string
 }
 
+export interface TrendRow {
+  calc_date: string
+  total_capital_usd: number | null
+  total_es_scaled: number | null
+  worst_zone: string | null
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'

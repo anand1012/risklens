@@ -1,19 +1,24 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer,
+} from 'recharts'
+import {
   fetchRiskSummary, fetchCapitalCharge,
   fetchBacktesting, fetchPlat, fetchRfet,
+  fetchDates, fetchTrend,
 } from '../api'
 import type { RiskSummaryRow, CapitalChargeRow, BacktestingRow, PlatRow, RfetRow } from '../types'
 
 type Tab = 'summary' | 'capital' | 'backtesting' | 'plat' | 'rfet'
 
 const TABS: { id: Tab; label: string; bcbs: string }[] = [
-  { id: 'summary',     label: 'Risk Summary',    bcbs: '' },
-  { id: 'capital',     label: 'Capital Charge',  bcbs: '¶180-186' },
-  { id: 'backtesting', label: 'Back-Testing',    bcbs: '¶351-368' },
-  { id: 'plat',        label: 'PLAT',            bcbs: '¶329-345' },
-  { id: 'rfet',        label: 'RFET',            bcbs: '¶76-80' },
+  { id: 'summary',     label: 'Risk Summary',   bcbs: '' },
+  { id: 'capital',     label: 'Capital Charge', bcbs: '¶180-186' },
+  { id: 'backtesting', label: 'Back-Testing',   bcbs: '¶351-368' },
+  { id: 'plat',        label: 'PLAT',           bcbs: '¶329-345' },
+  { id: 'rfet',        label: 'RFET',           bcbs: '¶76-80' },
 ]
 
 function fmt(n: number | null | undefined, decimals = 2): string {
@@ -42,6 +47,71 @@ function PassBadge({ pass }: { pass: boolean | null }) {
     : <span className="px-2 py-0.5 rounded text-xs font-semibold bg-red-500/15 text-red-400 border border-red-500/30">FAIL</span>
 }
 
+// ── Trend chart ───────────────────────────────────────────────────────────────
+
+function TrendChart() {
+  const { data = [], isLoading } = useQuery({
+    queryKey: ['risk-trend'],
+    queryFn: fetchTrend,
+    staleTime: 300_000,
+  })
+
+  if (isLoading) return <div className="card h-[200px] flex items-center justify-center text-slate-500 text-sm">Loading trend…</div>
+  if (!data.length) return null
+
+  const chartData = data.map((r) => ({
+    date: r.calc_date.slice(5),   // MM-DD
+    capital: r.total_capital_usd != null ? +(r.total_capital_usd / 1_000_000).toFixed(1) : 0,
+    es:      r.total_es_scaled    != null ? +(r.total_es_scaled    / 1_000_000).toFixed(1) : 0,
+  }))
+
+  return (
+    <div className="card">
+      <p className="text-xs font-semibold text-slate-400 mb-4">
+        Total Capital Charge — All Desks (USD M)
+      </p>
+      <ResponsiveContainer width="100%" height={180}>
+        <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="capGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.35} />
+              <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="esGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor="#06b6d4" stopOpacity={0.2} />
+              <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis
+            dataKey="date"
+            tick={{ fill: '#64748b', fontSize: 10 }}
+            axisLine={false} tickLine={false}
+            interval={Math.max(0, Math.floor(chartData.length / 8) - 1)}
+          />
+          <YAxis
+            tick={{ fill: '#64748b', fontSize: 10 }}
+            axisLine={false} tickLine={false}
+            width={44}
+            tickFormatter={(v) => `$${v}M`}
+          />
+          <Tooltip
+            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+            labelStyle={{ color: '#94a3b8' }}
+            formatter={(v: number, name: string) => [`$${v}M`, name === 'capital' ? 'Capital' : 'ES 97.5%']}
+          />
+          <Area type="monotone" dataKey="capital" stroke="#6366f1" strokeWidth={2} fill="url(#capGrad)" dot={false} activeDot={{ r: 3 }} />
+          <Area type="monotone" dataKey="es"      stroke="#06b6d4" strokeWidth={1.5} fill="url(#esGrad)" dot={false} activeDot={{ r: 3 }} />
+        </AreaChart>
+      </ResponsiveContainer>
+      <div className="flex gap-4 mt-2">
+        <span className="flex items-center gap-1.5 text-xs text-slate-500"><span className="w-3 h-0.5 bg-indigo-500 inline-block" /> Capital Charge</span>
+        <span className="flex items-center gap-1.5 text-xs text-slate-500"><span className="w-3 h-0.5 bg-cyan-500 inline-block" /> ES 97.5% Scaled</span>
+      </div>
+    </div>
+  )
+}
+
 // ── Summary tab ───────────────────────────────────────────────────────────────
 
 function SummaryTab() {
@@ -56,7 +126,6 @@ function SummaryTab() {
 
   return (
     <div className="space-y-6">
-      {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard label="Firm ES 97.5% (scaled)" value={fmtM(firm?.es_975_scaled)} />
         <KpiCard label="Firm Capital Charge" value={fmtM(firm?.capital_charge_usd)} highlight />
@@ -64,7 +133,8 @@ function SummaryTab() {
         <KpiCard label="PLAT Failing Desks" value={String(platFailing)} alert={platFailing > 0} />
       </div>
 
-      {/* Desk table */}
+      <TrendChart />
+
       {isLoading ? <Spinner /> : (
         <Table
           cols={['Desk', 'Risk Class', 'ES 97.5% 1d', 'ES Scaled', 'Capital Charge', 'Traffic Light', 'PLAT', 'Exceptions (250d)']}
@@ -124,9 +194,19 @@ function CapitalTab() {
 // ── Back-testing tab ──────────────────────────────────────────────────────────
 
 function BacktestingTab() {
+  const { data: dates = [] } = useQuery({
+    queryKey: ['backtesting-dates'],
+    queryFn: () => fetchDates('backtesting'),
+    staleTime: 300_000,
+  })
+
+  const [calcDate, setCalcDate] = useState('')
+  const activeDate = calcDate || dates[0]
+
   const { data = [], isLoading } = useQuery({
-    queryKey: ['risk-backtesting'],
-    queryFn: () => fetchBacktesting(),
+    queryKey: ['risk-backtesting', activeDate],
+    queryFn: () => fetchBacktesting(undefined, undefined, activeDate),
+    enabled: !!activeDate,
   })
 
   const red   = data.filter((r) => r.traffic_light_zone === 'RED').length
@@ -134,10 +214,24 @@ function BacktestingTab() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-4">
-        <KpiCard label="RED zone desks"   value={String(red)}   alert={red > 0} />
-        <KpiCard label="AMBER zone desks" value={String(amber)} alert={amber > 0} />
-        <KpiCard label="GREEN zone desks" value={String(data.filter(r => r.traffic_light_zone === 'GREEN').length)} />
+      <div className="flex items-start gap-4">
+        <div className="grid grid-cols-3 gap-4 flex-1">
+          <KpiCard label="RED zone desks"   value={String(red)}   alert={red > 0} />
+          <KpiCard label="AMBER zone desks" value={String(amber)} alert={amber > 0} />
+          <KpiCard label="GREEN zone desks" value={String(data.filter(r => r.traffic_light_zone === 'GREEN').length)} />
+        </div>
+        <div className="flex-shrink-0">
+          <label className="block text-xs text-slate-500 mb-1">Calc Date</label>
+          <select
+            value={calcDate}
+            onChange={(e) => setCalcDate(e.target.value)}
+            className="input text-sm w-36"
+          >
+            {dates.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+        </div>
       </div>
       {isLoading ? <Spinner /> : (
         <Table
