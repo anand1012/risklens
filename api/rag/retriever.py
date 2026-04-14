@@ -4,7 +4,7 @@ Combines BM25 (lexical) + BigQuery ANN vector search (semantic) via score fusion
 
 At query time:
   1. BM25 scores from the in-memory index (loaded at startup)
-  2. Vector scores from BQ VECTOR_SEARCH over risklens_embeddings.vectors
+  2. Vector scores from BQ VECTOR_SEARCH over risklens_embeddings.vectors_s
   3. Reciprocal Rank Fusion merges both ranked lists
 
 The retriever returns a list of RetrievedDoc (text + metadata + score),
@@ -57,7 +57,7 @@ def _bq_vector_search(
             base.chunk_id,
             distance
         FROM VECTOR_SEARCH(
-            TABLE `{project}.risklens_embeddings.vectors`,
+            TABLE `{project}.risklens_embeddings.vectors_s`,
             'embedding',
             (SELECT {vec_literal} AS embedding),
             top_k => {top_k},

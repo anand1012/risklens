@@ -10,7 +10,7 @@ SSE event format:
   data: <token>                   — streamed answer tokens
   data: __done__                  — end of stream
 
-Also logs each chat query to risklens_catalog.access_log for analytics.
+Also logs each chat query to risklens_catalog.access_log_r for analytics.
 """
 
 import os
@@ -68,7 +68,7 @@ def _log_query(query: str, request: Request) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         get_client().insert_rows_json(
-            f"{project()}.risklens_catalog.access_log", [row]
+            f"{project()}.risklens_catalog.access_log_r", [row]
         )
     except Exception:
         pass  # logging is non-critical

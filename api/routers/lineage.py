@@ -132,7 +132,7 @@ def list_nodes(
 
     sql = f"""
         SELECT node_id, name, type, domain, layer, metadata
-        FROM `{project()}.risklens_lineage.nodes`
+        FROM `{project()}.risklens_lineage.nodes_s`
         WHERE {where}
         ORDER BY domain, layer, name
         LIMIT {limit}
@@ -149,7 +149,7 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
     # Seed node IDs — start from the requested asset
     # We iteratively expand via edges up to `hops` levels
     seed_sql = f"""
-        SELECT node_id FROM `{project()}.risklens_lineage.nodes`
+        SELECT node_id FROM `{project()}.risklens_lineage.nodes_s`
         WHERE node_id = '{asset_id}'
     """
     seeds = [r["node_id"] for r in query_rows(seed_sql)]
@@ -167,7 +167,7 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
         expansion_sql = f"""
             SELECT DISTINCT
                 CASE WHEN from_node_id IN ({ids}) THEN to_node_id ELSE from_node_id END AS neighbor
-            FROM `{project()}.risklens_lineage.edges`
+            FROM `{project()}.risklens_lineage.edges_s`
             WHERE from_node_id IN ({ids}) OR to_node_id IN ({ids})
         """
         neighbors = {r["neighbor"] for r in query_rows(expansion_sql)} - visited
@@ -178,12 +178,12 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
 
     nodes_sql = f"""
         SELECT node_id, name, type, domain, layer, metadata
-        FROM `{project()}.risklens_lineage.nodes`
+        FROM `{project()}.risklens_lineage.nodes_s`
         WHERE node_id IN ({all_ids})
     """
     edges_sql = f"""
         SELECT edge_id, from_node_id, to_node_id, relationship, pipeline_job
-        FROM `{project()}.risklens_lineage.edges`
+        FROM `{project()}.risklens_lineage.edges_s`
         WHERE from_node_id IN ({all_ids}) AND to_node_id IN ({all_ids})
     """
 

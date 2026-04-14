@@ -137,7 +137,7 @@ def main():
 
     df = spark.createDataFrame(all_rows, schema=BRONZE_SCHEMA)
     row_count = df.count()
-    log.info(f"Writing {row_count:,} rows to BigQuery risklens_bronze.rates")
+    log.info(f"Writing {row_count:,} rows to BigQuery risklens_bronze.rates_r")
 
     (
         df.write
@@ -151,7 +151,7 @@ def main():
         .save()
     )
 
-    log.info(f"Done: {row_count:,} rows written to risklens_bronze.rates")
+    log.info(f"Done: {row_count:,} rows written to risklens_bronze.rates_r")
     spark.stop()
 
 

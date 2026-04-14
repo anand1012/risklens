@@ -198,7 +198,7 @@ def ingest_date(spark: SparkSession, project: str, bucket: str, trade_date: date
         .save()
     )
 
-    log.info(f"  Done: {row_count:,} rows written to risklens_bronze.trades")
+    log.info(f"  Done: {row_count:,} rows written to risklens_bronze.trades_r")
 
 
 def main():

@@ -27,7 +27,7 @@ def create_datasets(client: bigquery.Client, project: str):
 
 def create_catalog_tables(client: bigquery.Client, project: str):
     tables = {
-        "assets": [
+        "assets_s": [
             bigquery.SchemaField("asset_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("name", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("type", "STRING"),        # table, feed, report, model
@@ -40,7 +40,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
             bigquery.SchemaField("created_at", "TIMESTAMP"),
             bigquery.SchemaField("updated_at", "TIMESTAMP"),
         ],
-        "ownership": [
+        "ownership_s": [
             bigquery.SchemaField("asset_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("owner_name", "STRING"),
             bigquery.SchemaField("team", "STRING"),
@@ -48,7 +48,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
             bigquery.SchemaField("email", "STRING"),
             bigquery.SchemaField("assigned_date", "DATE"),
         ],
-        "quality_scores": [
+        "quality_scores_s": [
             bigquery.SchemaField("asset_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("null_rate", "FLOAT64"),
             bigquery.SchemaField("schema_drift", "BOOL"),
@@ -56,7 +56,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
             bigquery.SchemaField("duplicate_rate", "FLOAT64"),
             bigquery.SchemaField("last_checked", "TIMESTAMP"),
         ],
-        "sla_status": [
+        "sla_status_s": [
             bigquery.SchemaField("asset_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("expected_refresh", "TIMESTAMP"),
             bigquery.SchemaField("actual_refresh", "TIMESTAMP"),
@@ -64,7 +64,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
             bigquery.SchemaField("breach_duration_mins", "INTEGER"),
             bigquery.SchemaField("checked_at", "TIMESTAMP"),
         ],
-        "schema_registry": [
+        "schema_registry_s": [
             bigquery.SchemaField("asset_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("column_name", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("data_type", "STRING"),
@@ -72,7 +72,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
             bigquery.SchemaField("sample_value", "STRING"),
             bigquery.SchemaField("description", "STRING"),
         ],
-        "access_log": [
+        "access_log_r": [
             bigquery.SchemaField("event_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("page", "STRING"),
             bigquery.SchemaField("action", "STRING"),    # page_view, asset_click, chat_query, search
@@ -97,7 +97,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
 
 def create_lineage_tables(client: bigquery.Client, project: str):
     tables = {
-        "nodes": [
+        "nodes_s": [
             bigquery.SchemaField("node_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("name", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("type", "STRING"),   # source, pipeline, table, report
@@ -106,7 +106,7 @@ def create_lineage_tables(client: bigquery.Client, project: str):
             bigquery.SchemaField("metadata", "JSON"),
             bigquery.SchemaField("created_at", "TIMESTAMP"),
         ],
-        "edges": [
+        "edges_s": [
             bigquery.SchemaField("edge_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("from_node_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("to_node_id", "STRING", mode="REQUIRED"),
@@ -125,7 +125,7 @@ def create_lineage_tables(client: bigquery.Client, project: str):
 
 def create_embeddings_tables(client: bigquery.Client, project: str):
     tables = {
-        "chunks": [
+        "chunks_s": [
             bigquery.SchemaField("chunk_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("asset_id", "STRING"),
             bigquery.SchemaField("text", "STRING"),
@@ -133,7 +133,7 @@ def create_embeddings_tables(client: bigquery.Client, project: str):
             bigquery.SchemaField("domain", "STRING"),
             bigquery.SchemaField("created_at", "TIMESTAMP"),
         ],
-        "vectors": [
+        "vectors_s": [
             bigquery.SchemaField("chunk_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("embedding", "FLOAT64", mode="REPEATED"),
         ],
