@@ -69,14 +69,14 @@ def read_silver(spark: SparkSession, project: str, table: str,
     query = f"SELECT * FROM `{project}.risklens_silver.{table}`"
     if trade_date:
         query += f" WHERE trade_date = '{trade_date}'"
-    return spark.read.format("bigquery").option("query", query).load()
+    return spark.read.format("bigquery").option("parentProject", project).option("query", query).load()
 
 
 def read_gold_table(spark: SparkSession, project: str,
                     table: str, trade_date: str) -> DataFrame:
     query = (f"SELECT * FROM `{project}.risklens_gold.{table}` "
              f"WHERE trade_date = '{trade_date}'")
-    return spark.read.format("bigquery").option("query", query).load()
+    return spark.read.format("bigquery").option("parentProject", project).option("query", query).load()
 
 
 def write_gold(df: DataFrame, project: str, bucket: str,
@@ -621,6 +621,7 @@ def build_rfet_results(spark: SparkSession, project: str,
     try:
         # Read full silver.rates history (no trade_date filter) to count all observations
         rates = spark.read.format("bigquery") \
+            .option("parentProject", project) \
             .option("query",
                     f"SELECT series_id, date FROM `{project}.risklens_silver.rates`") \
             .load()
