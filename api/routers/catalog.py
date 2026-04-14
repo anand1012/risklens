@@ -48,8 +48,16 @@ def list_assets(
             s.breach_flag
         FROM `{project()}.risklens_catalog.assets` a
         LEFT JOIN `{project()}.risklens_catalog.ownership` o USING (asset_id)
-        LEFT JOIN `{project()}.risklens_catalog.quality_scores` q USING (asset_id)
-        LEFT JOIN `{project()}.risklens_catalog.sla_status` s USING (asset_id)
+        LEFT JOIN (
+            SELECT asset_id, freshness_status, null_rate
+            FROM `{project()}.risklens_catalog.quality_scores`
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY asset_id ORDER BY last_checked DESC) = 1
+        ) q USING (asset_id)
+        LEFT JOIN (
+            SELECT asset_id, breach_flag
+            FROM `{project()}.risklens_catalog.sla_status`
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY asset_id ORDER BY checked_at DESC) = 1
+        ) s USING (asset_id)
         WHERE {where}
         ORDER BY a.domain, a.layer, a.name
         LIMIT {limit}
