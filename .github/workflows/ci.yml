@@ -147,7 +147,10 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Apply k8s manifests
-        run: kubectl apply -f infra/k8s/ --namespace=${{ env.NAMESPACE }}
+        run: |
+          kubectl apply -f infra/k8s/ --namespace=${{ env.NAMESPACE }}
+          # Remove HPA if it still exists from a previous deploy
+          kubectl delete hpa --all --namespace=${{ env.NAMESPACE }} --ignore-not-found=true
 
       - name: Update API image
         run: |
@@ -164,9 +167,9 @@ jobs:
       - name: Wait for rollouts
         run: |
           kubectl rollout status deployment/risklens-api \
-            --namespace=${{ env.NAMESPACE }} --timeout=180s
+            --namespace=${{ env.NAMESPACE }} --timeout=300s
           kubectl rollout status deployment/risklens-frontend \
-            --namespace=${{ env.NAMESPACE }} --timeout=120s
+            --namespace=${{ env.NAMESPACE }} --timeout=180s
 
       - name: Deployment summary
         run: |
