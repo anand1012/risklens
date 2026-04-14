@@ -50,8 +50,8 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      {/* Main content — overflow-hidden so each view controls its own scroll */}
+      <main className="flex-1 overflow-hidden min-h-0 flex flex-col">
         <Outlet />
       </main>
 

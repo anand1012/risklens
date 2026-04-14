@@ -105,7 +105,7 @@ export default function Lineage() {
   const onConnect = useCallback((c: Connection) => {}, [])
 
   return (
-    <div className="flex flex-col" style={{ height: '100vh' }}>
+    <div className="flex flex-col" style={{ height: '100%', minHeight: '100vh' }}>
       {/* Header */}
       <div className="px-6 py-5 border-b border-slate-800 flex items-center gap-4">
         <div>
