@@ -26,7 +26,7 @@ cleanup() {
 trap cleanup EXIT
 
 PROJECT_ID="${1:?Usage: ./refresh_data.sh YOUR_GCP_PROJECT_ID [--days N]}"
-REGION="us-central1"
+REGION="${DATAPROC_REGION:-us-east1}"   # override with: DATAPROC_REGION=us-central1 ./refresh_data.sh ...
 DAYS=1
 
 # Parse --days flag from remaining args
@@ -61,7 +61,7 @@ echo "--- Creating Dataproc cluster ---"
 gcloud dataproc clusters create "$CLUSTER_NAME" \
   --region="$REGION" \
   --single-node \
-  --master-machine-type="e2-standard-4" \
+  --master-machine-type="n2-standard-2" \
   --master-boot-disk-size=100 \
   --image-version="2.1-debian11" \
   --service-account="risklens-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
