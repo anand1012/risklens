@@ -329,6 +329,7 @@ async def stream_answer(
                 full_msg,
                 ToolMessage(content=tool_result, tool_call_id=tc["id"]),
             ]
+            phase2_yielded = False
             try:
                 async for chunk in plain_llm.astream(follow_up, config=run_cfg):
                     content = chunk.content
@@ -342,9 +343,22 @@ async def stream_answer(
                     else:
                         token = ""
                     if token:
+                        phase2_yielded = True
                         yield f"data: {json.dumps(token)}\n\n"
             except Exception as exc:
                 logger.error("Phase 2 stream error: %s", exc, exc_info=True)
+
+            # Phase 2 produced nothing — build a plain answer from tool result
+            if not phase2_yielded:
+                logger.warning("Phase 2 yielded nothing — falling back to plain answer")
+                fallback_msgs = messages + [
+                    HumanMessage(content=(
+                        f"Here is the query result:\n{tool_result}\n\n"
+                        f"Please answer the original question using this data."
+                    ))
+                ]
+                async for tok in _fallback_answer(fallback_msgs, ant_key, run_cfg):
+                    yield tok
 
     yield "data: __done__\n\n"
 
