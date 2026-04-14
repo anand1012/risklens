@@ -2,6 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { streamChat } from '../api'
 import type { ChatMessage, ChatSource } from '../types'
 
+// crypto.randomUUID() requires a secure context (HTTPS). Fallback for HTTP (bare IP access).
+function genId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return Date.now().toString(36) + Math.random().toString(36).slice(2)
+}
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -24,11 +32,11 @@ export default function ChatPanel({ open, onClose }: Props) {
     setBusy(true)
 
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: genId(),
       role: 'user',
       content: query,
     }
-    const assistantId = crypto.randomUUID()
+    const assistantId = genId()
     const assistantMsg: ChatMessage = {
       id: assistantId,
       role: 'assistant',
