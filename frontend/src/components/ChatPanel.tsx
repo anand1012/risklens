@@ -18,9 +18,8 @@ export default function ChatPanel({ open, onClose }: Props) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const send = useCallback(() => {
-    const query = input.trim()
-    if (!query || busy) return
+  const sendQuery = useCallback((query: string) => {
+    if (!query.trim() || busy) return
     setInput('')
     setBusy(true)
 
@@ -40,7 +39,7 @@ export default function ChatPanel({ open, onClose }: Props) {
     setMessages((prev) => [...prev, userMsg, assistantMsg])
 
     cancelRef.current = streamChat(
-      query,
+      query.trim(),
       (sources: ChatSource[]) => {
         setMessages((prev) =>
           prev.map((m) => (m.id === assistantId ? { ...m, sources } : m))
@@ -73,7 +72,7 @@ export default function ChatPanel({ open, onClose }: Props) {
   }, [input, busy])
 
   const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuery(input) }
   }
 
   if (!open) return null
@@ -111,7 +110,7 @@ export default function ChatPanel({ open, onClose }: Props) {
                 ].map((q) => (
                   <button
                     key={q}
-                    onClick={() => { setInput(q) }}
+                    onClick={() => sendQuery(q)}
                     className="text-left text-xs px-3 py-2 rounded-lg border border-slate-700
                                text-slate-400 hover:border-brand-500 hover:text-brand-400 transition-colors"
                   >
@@ -170,7 +169,7 @@ export default function ChatPanel({ open, onClose }: Props) {
               className="input flex-1 resize-none text-sm"
             />
             <button
-              onClick={send}
+              onClick={() => sendQuery(input)}
               disabled={busy || !input.trim()}
               className="btn-primary self-end disabled:opacity-40 disabled:cursor-not-allowed px-4"
             >
