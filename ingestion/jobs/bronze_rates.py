@@ -142,11 +142,14 @@ def main():
     (
         df.write
         .format("bigquery")
-        .option("project",     args.project)
-        .option("dataset",     "risklens_bronze")
-        .option("table",       "rates")
-        .option("writeMethod", "indirect")
+        .option("project",          args.project)
+        .option("dataset",          "risklens_bronze")
+        .option("table",            "rates_r")
+        .option("writeMethod",      "indirect")
         .option("temporaryGcsBucket", args.bucket)
+        .option("partitionField",   "date")
+        .option("partitionType",    "DAY")
+        .option("clusteredFields",  "series_id,domain")
         .mode("append")
         .save()
     )

@@ -189,11 +189,14 @@ def ingest_date(spark: SparkSession, project: str, bucket: str, trade_date: date
     (
         df.write
         .format("bigquery")
-        .option("project",     project)
-        .option("dataset",     "risklens_bronze")
-        .option("table",       "trades")
-        .option("writeMethod", "indirect")    # uses GCS as staging
+        .option("project",          project)
+        .option("dataset",          "risklens_bronze")
+        .option("table",            "trades_r")
+        .option("writeMethod",      "indirect")    # uses GCS as staging
         .option("temporaryGcsBucket", bucket)
+        .option("partitionField",   "ingested_at")
+        .option("partitionType",    "DAY")
+        .option("clusteredFields",  "asset_class")
         .mode("append")
         .save()
     )

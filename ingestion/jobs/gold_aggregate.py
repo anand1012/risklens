@@ -48,9 +48,12 @@ def read_silver(spark: SparkSession, project: str, table: str,
 
 
 def write_gold(df: DataFrame, project: str, bucket: str,
-               table: str, mode: str = "append") -> int:
+               table: str, mode: str = "append",
+               partition_field: str | None = None,
+               partition_type: str = "DAY",
+               cluster_fields: str | None = None) -> int:
     row_count = df.count()
-    (
+    writer = (
         df.write
         .format("bigquery")
         .option("project",     project)
@@ -58,9 +61,13 @@ def write_gold(df: DataFrame, project: str, bucket: str,
         .option("table",       table)
         .option("writeMethod", "indirect")
         .option("temporaryGcsBucket", bucket)
-        .mode(mode)
-        .save()
     )
+    if partition_field:
+        writer = writer.option("partitionField", partition_field) \
+                       .option("partitionType",  partition_type)
+    if cluster_fields:
+        writer = writer.option("clusteredFields", cluster_fields)
+    writer.mode(mode).save()
     log.info(f"  risklens_gold.{table}: {row_count:,} rows written")
     return row_count
 
@@ -78,7 +85,7 @@ def update_asset_catalog(spark: SparkSession, project: str, bucket: str,
         .format("bigquery")
         .option("project",     project)
         .option("dataset",     "risklens_catalog")
-        .option("table",       "assets")
+        .option("table",       "assets_s")
         .option("writeMethod", "indirect")
         .option("temporaryGcsBucket", bucket)
         .mode("append")
@@ -105,7 +112,7 @@ def update_sla_status(spark: SparkSession, project: str, bucket: str,
         .format("bigquery")
         .option("project",     project)
         .option("dataset",     "risklens_catalog")
-        .option("table",       "sla_status")
+        .option("table",       "sla_status_s")
         .option("writeMethod", "indirect")
         .option("temporaryGcsBucket", bucket)
         .mode("append")
@@ -126,9 +133,9 @@ def build_trade_positions(spark: SparkSession, project: str,
     """
     log.info("Building gold.trade_positions_r")
 
-    trades = read_silver(spark, project, "trades", trade_date)
-    prices = read_silver(spark, project, "prices", trade_date)
-    rates  = read_silver(spark, project, "rates",  trade_date)
+    trades = read_silver(spark, project, "trades_r", trade_date)
+    prices = read_silver(spark, project, "prices_r", trade_date)
+    rates  = read_silver(spark, project, "rates_r",  trade_date)
 
     if trades.rdd.isEmpty():
         log.info("  No silver trades — skipping trade_positions.")
@@ -171,7 +178,8 @@ def build_trade_positions(spark: SparkSession, project: str,
         )
     )
 
-    return write_gold(positions, project, bucket, "trade_positions")
+    return write_gold(positions, project, bucket, "trade_positions",
+                      partition_field="trade_date", cluster_fields="asset_class,currency")
 
 
 def build_var_outputs(spark: SparkSession, project: str,
@@ -182,7 +190,7 @@ def build_var_outputs(spark: SparkSession, project: str,
     """
     log.info("Building gold.var_outputs_s")
 
-    risk = read_silver(spark, project, "risk_outputs", trade_date)
+    risk = read_silver(spark, project, "risk_outputs_s", trade_date)
     if risk.rdd.isEmpty():
         log.info("  No silver risk data — skipping var_outputs.")
         return 0
@@ -200,20 +208,22 @@ def build_var_outputs(spark: SparkSession, project: str,
                      F.current_timestamp().alias("processed_at"),
                  )
 
-    # Firm-level aggregate
-    firm_row = var_df.agg(
-        F.max("calc_date").alias("calc_date"),
+    # Firm-level aggregate — group by calc_date + trade_date so each day gets its own FIRM row
+    firm_row = var_df.groupBy("calc_date", "trade_date").agg(
         F.lit("FIRM").alias("desk"),
         F.sum("var_99_1d").alias("var_99_1d"),
         F.sum("var_99_10d").alias("var_99_10d"),
         F.first("method").alias("method"),
         F.first("scenarios").alias("scenarios"),
-        F.first("trade_date").alias("trade_date"),
         F.current_timestamp().alias("processed_at"),
+    ).select(
+        "calc_date", "desk", "var_99_1d", "var_99_10d",
+        "method", "scenarios", "trade_date", "processed_at",
     )
 
     gold_df = var_df.union(firm_row)
-    return write_gold(gold_df, project, bucket, "var_outputs")
+    return write_gold(gold_df, project, bucket, "var_outputs",
+                      partition_field="calc_date", cluster_fields="desk,method")
 
 
 def build_es_outputs(spark: SparkSession, project: str,
@@ -224,7 +234,7 @@ def build_es_outputs(spark: SparkSession, project: str,
     """
     log.info("Building gold.es_outputs_s")
 
-    risk = read_silver(spark, project, "risk_outputs", trade_date)
+    risk = read_silver(spark, project, "risk_outputs_s", trade_date)
     if risk.rdd.isEmpty():
         log.info("  No silver risk data — skipping es_outputs.")
         return 0
@@ -239,17 +249,18 @@ def build_es_outputs(spark: SparkSession, project: str,
                     F.current_timestamp().alias("processed_at"),
                 )
 
-    firm_row = es_df.agg(
-        F.max("calc_date").alias("calc_date"),
+    firm_row = es_df.groupBy("calc_date", "trade_date").agg(
         F.lit("FIRM").alias("desk"),
         F.sum("es_975_1d").alias("es_975_1d"),
         F.sum("es_975_10d").alias("es_975_10d"),
-        F.first("trade_date").alias("trade_date"),
         F.current_timestamp().alias("processed_at"),
+    ).select(
+        "calc_date", "desk", "es_975_1d", "es_975_10d", "trade_date", "processed_at",
     )
 
     gold_df = es_df.union(firm_row)
-    return write_gold(gold_df, project, bucket, "es_outputs")
+    return write_gold(gold_df, project, bucket, "es_outputs",
+                      partition_field="calc_date", cluster_fields="desk")
 
 
 def build_pnl_vectors(spark: SparkSession, project: str,
@@ -260,7 +271,7 @@ def build_pnl_vectors(spark: SparkSession, project: str,
     """
     log.info("Building gold.pnl_vectors_s")
 
-    risk = read_silver(spark, project, "risk_outputs", trade_date)
+    risk = read_silver(spark, project, "risk_outputs_s", trade_date)
     if risk.rdd.isEmpty():
         log.info("  No silver risk data — skipping pnl_vectors.")
         return 0
@@ -277,7 +288,8 @@ def build_pnl_vectors(spark: SparkSession, project: str,
                      F.current_timestamp().alias("processed_at"),
                  )
 
-    return write_gold(pnl_df, project, bucket, "pnl_vectors")
+    return write_gold(pnl_df, project, bucket, "pnl_vectors",
+                      partition_field="calc_date", cluster_fields="desk")
 
 
 def build_risk_summary(spark: SparkSession, project: str,
@@ -307,10 +319,12 @@ def build_risk_summary(spark: SparkSession, project: str,
         var_df.alias("v")
         .join(es_df.alias("e"),
               (F.col("v.desk") == F.col("e.desk")) &
+              (F.col("v.calc_date") == F.col("e.calc_date")) &
               (F.col("v.trade_date") == F.col("e.trade_date")),
               "left")
         .join(pnl_df.alias("p"),
               (F.col("v.desk") == F.col("p.desk")) &
+              (F.col("v.calc_date") == F.col("p.calc_date")) &
               (F.col("v.trade_date") == F.col("p.trade_date")),
               "left")
         .select(
@@ -334,7 +348,8 @@ def build_risk_summary(spark: SparkSession, project: str,
         )
     )
 
-    return write_gold(summary, project, bucket, "risk_summary")
+    return write_gold(summary, project, bucket, "risk_summary",
+                      partition_field="calc_date", cluster_fields="desk,method")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
