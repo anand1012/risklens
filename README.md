@@ -3,7 +3,7 @@
 
 > An intelligent data catalog for capital markets — built to solve the exact governance problem that Atlan solves in regulated financial institutions.
 
-**Live:** [https://risklens.preciseguess.com](https://risklens.preciseguess.com)
+**Live:** http://34.102.203.211 · [https://risklens.preciseguess.com](https://risklens.preciseguess.com) *(pending DNS)*
 
 [![GCP](https://img.shields.io/badge/GCP-BigQuery%20%7C%20GKE-4285F4?logo=googlecloud)](https://cloud.google.com)
 [![LangChain](https://img.shields.io/badge/LangChain%20%7C%20LangGraph%20%7C%20LangSmith-1C3C3C)](https://langchain.com)
@@ -30,12 +30,12 @@ When a regulator asks *"show me the full lineage of your VaR number"* — it tak
 
 | Feature | Description |
 |---|---|
-| **Data Catalog** | Discover all 16 FRTB assets across your data estate — search, filter by domain/layer/type, click any asset to see schema, quality, SLA, and ownership |
-| **Lineage Graph** | Interactive DAG showing the full data pipeline from raw source to regulatory report — powered by dagre auto-layout (left-to-right flow, no edge crossings) |
-| **Transformation Stories** | Click any arrow in the lineage graph to see a plain-English description of the business transformation — what it does, the business impact, frequency, and owner |
+| **Data Catalog** | Discover all FRTB assets across the data estate — search, filter by domain/layer/type, click any asset to see schema, quality, SLA, and ownership |
+| **Lineage Graph** | Interactive DAG showing the full pipeline from raw source to regulatory report — dagre auto-layout (LR flow). Click any arrow for a business-language transformation story. |
 | **Governance Dashboard** | SLA breach alerts, data quality scores (freshness, null rate, schema drift), and ownership registry across all assets |
+| **FRTB IMA Dashboard** | ES 97.5%, back-testing traffic lights (GREEN/AMBER/RED), PLAT (UPL, Spearman, KS), RFET eligibility, capital charge — all BCBS 457 metrics live |
 | **Gold Assets View** | Card-based view of all business-ready (gold layer) tables with key metrics |
-| **AI Chat (Claude)** | Ask anything in natural language — *"Which tables feed the ES calculation?"* — powered by hybrid BM25 + vector RAG with source citations |
+| **AI Chat (Claude)** | Ask anything in natural language — *"Which tables feed the ES calculation?"* — powered by hybrid BM25 + vector RAG with source citations, rendered with Markdown |
 
 ---
 
@@ -55,8 +55,8 @@ When a regulator asks *"show me the full lineage of your VaR number"* — it tak
 └──────────────────────────┬──────────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────────┐
-│  AI LAYER — LangChain + LangGraph + LangSmith + Claude         │
-│  Hybrid RAG (BM25 + Vertex AI text-embedding-004)              │
+│  AI LAYER — LangChain + LangSmith + Claude (Anthropic)         │
+│  Hybrid RAG (BM25 + Cohere embed-english-v3.0 vector search)  │
 │  40 chunks indexed: asset descriptions, schema, pipeline docs  │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
@@ -75,7 +75,7 @@ When a regulator asks *"show me the full lineage of your VaR number"* — it tak
 | Layer | Technology |
 |---|---|
 | Analytical Storage | BigQuery — Medallion architecture (Bronze/Silver/Gold) |
-| Vector Embeddings | Vertex AI `text-embedding-004` via LangChain |
+| Vector Embeddings | Cohere `embed-english-v3.0` via LangChain |
 | RAG Orchestration | LangChain 0.3 (EnsembleRetriever: BM25 + semantic hybrid) |
 | Agentic Workflows | LangGraph — multi-step query routing |
 | LLM Observability | LangSmith |
@@ -150,7 +150,8 @@ risklens/
 │   │   ├── bronze_prices.py       ← Yahoo Finance → BigQuery bronze
 │   │   ├── bronze_synthetic.py    ← Synthetic FRTB data → bronze
 │   │   ├── silver_transform.py    ← Bronze → Silver (clean + validate)
-│   │   └── gold_aggregate.py      ← Silver → Gold (business-ready)
+│   │   ├── silver_enrich.py       ← Silver → Silver (join + enrich positions)
+│   │   └── gold_aggregate.py      ← Silver → Gold (FRTB IMA metrics)
 │   └── synthetic/
 │       └── generate.py            ← Synthetic FRTB data generator
 ├── indexing/
