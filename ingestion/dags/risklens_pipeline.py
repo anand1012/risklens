@@ -8,9 +8,11 @@ Schedule: 0 6 * * 1-5  (weekdays at 6am ET)
 Execution order:
   [bronze_trades, bronze_rates, bronze_prices, bronze_synthetic]  ← parallel
                               ↓
-                    silver_transform
+                    silver_transform   ← clean / dedup / outlier flag
                               ↓
-                    gold_aggregate
+                    silver_enrich      ← join risk_outputs × rates → risk_enriched
+                              ↓
+                    gold_aggregate     ← FRTB IMA metrics
                               ↓
                     trigger_indexing   ← triggers RAG index rebuild
 
@@ -114,6 +116,28 @@ def make_silver_job() -> dict:
                 f"--project={PROJECT_ID}",
                 f"--bucket={BUCKET}",
                 "--date={{ ds }}",          # Airflow macro: execution date
+            ],
+            "jar_file_uris": [SPARK_BQ_JAR],
+            "properties": {
+                "spark.executor.memory":   "4g",
+                "spark.driver.memory":     "4g",
+                "spark.sql.adaptive.enabled": "true",
+            },
+        },
+    }
+
+
+def make_silver_enrich_job() -> dict:
+    """Silver enrich job: joins risk_outputs × rates → risk_enriched."""
+    return {
+        "reference":  {"project_id": PROJECT_ID},
+        "placement":  {"cluster_name": CLUSTER_NAME},
+        "pyspark_job": {
+            "main_python_file_uri": f"gs://{BUCKET}/jobs/silver_enrich.py",
+            "args": [
+                f"--project={PROJECT_ID}",
+                f"--bucket={BUCKET}",
+                "--date={{ ds }}",
             ],
             "jar_file_uris": [SPARK_BQ_JAR],
             "properties": {
@@ -231,7 +255,15 @@ with DAG(
         project_id=PROJECT_ID,
     )
 
-    # ── Gold aggregate (after silver) ─────────────────────────────────────────
+    # ── Silver enrich (after transform — joins risk_outputs × rates) ────────────
+    silver_enrich = DataprocSubmitJobOperator(
+        task_id="silver_enrich",
+        job=make_silver_enrich_job(),
+        region=REGION,
+        project_id=PROJECT_ID,
+    )
+
+    # ── Gold aggregate (after silver enrich) ──────────────────────────────────
     gold = DataprocSubmitJobOperator(
         task_id="gold_aggregate",
         job=make_gold_job(),
@@ -263,6 +295,7 @@ with DAG(
         >> create_cluster
         >> [bronze_trades, bronze_rates, bronze_prices, bronze_synthetic]
         >> silver
+        >> silver_enrich
         >> gold
         >> log_run
         >> delete_cluster
