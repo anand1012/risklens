@@ -27,8 +27,8 @@ def get_sla_status(breaches_only: bool = Query(False)):
             s.breach_flag,
             s.breach_duration_mins,
             s.checked_at
-        FROM `{project()}.risklens_catalog.sla_status_s` s
-        JOIN `{project()}.risklens_catalog.assets_s` a USING (asset_id)
+        FROM `{project()}.risklens_catalog.sla_status` s
+        JOIN `{project()}.risklens_catalog.assets` a USING (asset_id)
         WHERE {where}
         ORDER BY s.breach_flag DESC, s.breach_duration_mins DESC
     """
@@ -49,8 +49,8 @@ def get_ownership(team: str | None = Query(None)):
             o.steward,
             o.email,
             o.assigned_date
-        FROM `{project()}.risklens_catalog.ownership_s` o
-        JOIN `{project()}.risklens_catalog.assets_s` a USING (asset_id)
+        FROM `{project()}.risklens_catalog.ownership` o
+        JOIN `{project()}.risklens_catalog.assets` a USING (asset_id)
         WHERE {where}
         ORDER BY o.team, o.owner_name
     """
@@ -80,8 +80,8 @@ def get_quality_scores(
             q.freshness_status,
             q.duplicate_rate,
             q.last_checked
-        FROM `{project()}.risklens_catalog.quality_scores_s` q
-        JOIN `{project()}.risklens_catalog.assets_s` a USING (asset_id)
+        FROM `{project()}.risklens_catalog.quality_scores` q
+        JOIN `{project()}.risklens_catalog.assets` a USING (asset_id)
         WHERE {where}
         ORDER BY q.freshness_status DESC, q.null_rate DESC
     """

@@ -188,7 +188,7 @@ def transform_trades(spark: SparkSession, project: str, bucket: str, trade_date:
     )
 
     nulls_count = bad_df.count()
-    write_silver(silver_df, project, bucket, "trades_r",
+    write_silver(silver_df, project, bucket, "trades",
                  partition_field="trade_date", cluster_fields="asset_class,currency")
     update_quality_score(spark, project, bucket, "silver_trades",
                          total, nulls_count, dupes, False, trade_date)
@@ -242,7 +242,7 @@ def transform_rates(spark: SparkSession, project: str, bucket: str, trade_date: 
         F.current_timestamp().alias("processed_at"),
     )
 
-    write_silver(silver_df, project, bucket, "rates_r",
+    write_silver(silver_df, project, bucket, "rates",
                  partition_field="date", cluster_fields="series_id,domain")
     update_quality_score(spark, project, bucket, "silver_rates",
                          total, nulls_count, dupes, False, trade_date)
@@ -306,7 +306,7 @@ def transform_prices(spark: SparkSession, project: str, bucket: str, trade_date:
         F.current_timestamp().alias("processed_at"),
     )
 
-    write_silver(silver_df, project, bucket, "prices_r",
+    write_silver(silver_df, project, bucket, "prices",
                  partition_field="date", cluster_fields="ticker,asset_class,currency")
     update_quality_score(spark, project, bucket, "silver_prices",
                          total, nulls_count, dupes, False, trade_date)
@@ -349,7 +349,7 @@ def transform_risk(spark: SparkSession, project: str, bucket: str, trade_date: s
 
     silver_df  = good_df.withColumn("processed_at", F.current_timestamp())
 
-    write_silver(silver_df, project, bucket, "risk_outputs_s",
+    write_silver(silver_df, project, bucket, "risk_outputs",
                  partition_field="calc_date", cluster_fields="desk")
     update_quality_score(spark, project, bucket, "silver_risk_outputs",
                          total, nulls_count, dupes, False, trade_date)

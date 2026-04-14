@@ -133,9 +133,9 @@ def build_trade_positions(spark: SparkSession, project: str,
     """
     log.info("Building gold.trade_positions_r")
 
-    trades = read_silver(spark, project, "trades_r", trade_date)
-    prices = read_silver(spark, project, "prices_r", trade_date)
-    rates  = read_silver(spark, project, "rates_r",  trade_date)
+    trades = read_silver(spark, project, "trades",  trade_date)
+    prices = read_silver(spark, project, "prices",  trade_date)
+    rates  = read_silver(spark, project, "rates",   trade_date)
 
     if trades.rdd.isEmpty():
         log.info("  No silver trades — skipping trade_positions.")
@@ -190,7 +190,7 @@ def build_var_outputs(spark: SparkSession, project: str,
     """
     log.info("Building gold.var_outputs_s")
 
-    risk = read_silver(spark, project, "risk_outputs_s", trade_date)
+    risk = read_silver(spark, project, "risk_outputs", trade_date)
     if risk.rdd.isEmpty():
         log.info("  No silver risk data — skipping var_outputs.")
         return 0
@@ -234,7 +234,7 @@ def build_es_outputs(spark: SparkSession, project: str,
     """
     log.info("Building gold.es_outputs_s")
 
-    risk = read_silver(spark, project, "risk_outputs_s", trade_date)
+    risk = read_silver(spark, project, "risk_outputs", trade_date)
     if risk.rdd.isEmpty():
         log.info("  No silver risk data — skipping es_outputs.")
         return 0
@@ -271,7 +271,7 @@ def build_pnl_vectors(spark: SparkSession, project: str,
     """
     log.info("Building gold.pnl_vectors_s")
 
-    risk = read_silver(spark, project, "risk_outputs_s", trade_date)
+    risk = read_silver(spark, project, "risk_outputs", trade_date)
     if risk.rdd.isEmpty():
         log.info("  No silver risk data — skipping pnl_vectors.")
         return 0

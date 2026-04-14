@@ -54,12 +54,12 @@ from datetime import timedelta
 BRONZE_TABLES = {
     "risk_outputs":   "risklens_bronze.risk_outputs_s",
     "pipeline_logs":  "risklens_bronze.pipeline_logs_s",
-    "ownership":      "risklens_catalog.ownership_s",
-    "quality_scores": "risklens_catalog.quality_scores_s",
-    "sla_status":     "risklens_catalog.sla_status_s",
-    "assets":         "risklens_catalog.assets_s",
-    "lineage_nodes":  "risklens_lineage.nodes_s",
-    "lineage_edges":  "risklens_lineage.edges_s",
+    "ownership":      "risklens_catalog.ownership",
+    "quality_scores": "risklens_catalog.quality_scores",
+    "sla_status":     "risklens_catalog.sla_status",
+    "assets":         "risklens_catalog.assets",
+    "lineage_nodes":  "risklens_lineage.nodes",
+    "lineage_edges":  "risklens_lineage.edges",
 }
 
 
@@ -143,31 +143,31 @@ def main():
     if all_quality:
         quality_df = pd.concat(all_quality, ignore_index=True)
         log.info(f"Writing quality scores ({len(quality_df):,} rows)...")
-        write_to_bigquery(spark, quality_df, "risklens_catalog.quality_scores_s", args.project, args.bucket)
+        write_to_bigquery(spark, quality_df, "risklens_catalog.quality_scores", args.project, args.bucket)
 
     if all_sla:
         sla_df = pd.concat(all_sla, ignore_index=True)
         log.info(f"Writing SLA status ({len(sla_df):,} rows)...")
-        write_to_bigquery(spark, sla_df, "risklens_catalog.sla_status_s", args.project, args.bucket)
+        write_to_bigquery(spark, sla_df, "risklens_catalog.sla_status", args.project, args.bucket)
 
     # ── Static data (overwrite on each run) ───────────────────────────────────
     log.info("Writing ownership registry...")
-    write_to_bigquery(spark, gen_ownership(), "risklens_catalog.ownership_s",
+    write_to_bigquery(spark, gen_ownership(), "risklens_catalog.ownership",
                       args.project, args.bucket, mode="overwrite")
 
     log.info("Writing asset catalog...")
-    write_to_bigquery(spark, gen_assets_catalog(), "risklens_catalog.assets_s",
+    write_to_bigquery(spark, gen_assets_catalog(), "risklens_catalog.assets",
                       args.project, args.bucket, mode="overwrite")
 
     log.info("Writing lineage graph...")
     nodes, edges = gen_lineage()
-    write_to_bigquery(spark, nodes, "risklens_lineage.nodes_s",
+    write_to_bigquery(spark, nodes, "risklens_lineage.nodes",
                       args.project, args.bucket, mode="overwrite")
-    write_to_bigquery(spark, edges, "risklens_lineage.edges_s",
+    write_to_bigquery(spark, edges, "risklens_lineage.edges",
                       args.project, args.bucket, mode="overwrite")
 
     log.info("Writing schema registry...")
-    write_to_bigquery(spark, gen_schema_registry(), "risklens_catalog.schema_registry_s",
+    write_to_bigquery(spark, gen_schema_registry(), "risklens_catalog.schema_registry",
                       args.project, args.bucket, mode="overwrite")
 
     log.info("Bronze synthetic ingestion complete.")

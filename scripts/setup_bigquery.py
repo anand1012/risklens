@@ -142,7 +142,7 @@ def create_bronze_tables(client: bigquery.Client, project: str):
 def create_silver_tables(client: bigquery.Client, project: str):
     base = f"{project}.risklens_silver"
 
-    _make_table(client, f"{base}.prices_r", [
+    _make_table(client, f"{base}.prices", [
         bigquery.SchemaField("ticker",      "STRING"),
         bigquery.SchemaField("name",        "STRING"),
         bigquery.SchemaField("asset_class", "STRING"),
@@ -158,7 +158,7 @@ def create_silver_tables(client: bigquery.Client, project: str):
         bigquery.SchemaField("processed_at","TIMESTAMP"),
     ], partition_field="date", cluster_fields=["ticker", "asset_class", "currency"])
 
-    _make_table(client, f"{base}.rates_r", [
+    _make_table(client, f"{base}.rates", [
         bigquery.SchemaField("series_id",   "STRING"),
         bigquery.SchemaField("series_name", "STRING"),
         bigquery.SchemaField("frequency",   "STRING"),
@@ -170,7 +170,7 @@ def create_silver_tables(client: bigquery.Client, project: str):
         bigquery.SchemaField("processed_at","TIMESTAMP"),
     ], partition_field="date", cluster_fields=["series_id", "domain"])
 
-    _make_table(client, f"{base}.trades_r", [
+    _make_table(client, f"{base}.trades", [
         bigquery.SchemaField("dissemination_id",          "STRING"),
         bigquery.SchemaField("original_dissemination_id", "STRING"),
         bigquery.SchemaField("action",                    "STRING"),
@@ -188,7 +188,7 @@ def create_silver_tables(client: bigquery.Client, project: str):
         bigquery.SchemaField("processed_at",              "TIMESTAMP"),
     ], partition_field="execution_timestamp", cluster_fields=["asset_class", "currency"])
 
-    _make_table(client, f"{base}.risk_outputs_s", [
+    _make_table(client, f"{base}.risk_outputs", [
         bigquery.SchemaField("desk",          "STRING"),
         bigquery.SchemaField("calc_date",     "DATE"),
         bigquery.SchemaField("var_99_1d",     "FLOAT64"),
@@ -278,8 +278,8 @@ def create_gold_tables(client: bigquery.Client, project: str):
 def create_catalog_tables(client: bigquery.Client, project: str):
     base = f"{project}.risklens_catalog"
 
-    # assets_s: no partition (small, ~13 rows); cluster by domain + layer for filter performance
-    _make_table(client, f"{base}.assets_s", [
+    # assets: no partition (small, ~13 rows); cluster by domain + layer for filter performance
+    _make_table(client, f"{base}.assets", [
         bigquery.SchemaField("asset_id",    "STRING", mode="REQUIRED"),
         bigquery.SchemaField("name",        "STRING", mode="REQUIRED"),
         bigquery.SchemaField("type",        "STRING"),
@@ -294,7 +294,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
     ], cluster_fields=["domain", "layer", "type"])
 
     # ownership_s: no partition (static lookup)
-    _make_table(client, f"{base}.ownership_s", [
+    _make_table(client, f"{base}.ownership", [
         bigquery.SchemaField("asset_id",      "STRING", mode="REQUIRED"),
         bigquery.SchemaField("owner_name",    "STRING"),
         bigquery.SchemaField("team",          "STRING"),
@@ -304,7 +304,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
     ], cluster_fields=["team"])
 
     # quality_scores_s: partition by last_checked (appended each pipeline run)
-    _make_table(client, f"{base}.quality_scores_s", [
+    _make_table(client, f"{base}.quality_scores", [
         bigquery.SchemaField("asset_id",         "STRING", mode="REQUIRED"),
         bigquery.SchemaField("null_rate",         "FLOAT64"),
         bigquery.SchemaField("schema_drift",      "BOOL"),
@@ -314,7 +314,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
     ], partition_field="last_checked", cluster_fields=["asset_id", "freshness_status"])
 
     # sla_status_s: partition by checked_at
-    _make_table(client, f"{base}.sla_status_s", [
+    _make_table(client, f"{base}.sla_status", [
         bigquery.SchemaField("asset_id",             "STRING", mode="REQUIRED"),
         bigquery.SchemaField("expected_refresh",     "TIMESTAMP"),
         bigquery.SchemaField("actual_refresh",       "TIMESTAMP"),
@@ -324,7 +324,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
     ], partition_field="checked_at", cluster_fields=["asset_id", "breach_flag"])
 
     # schema_registry_s: no partition (static, ~120 rows)
-    _make_table(client, f"{base}.schema_registry_s", [
+    _make_table(client, f"{base}.schema_registry", [
         bigquery.SchemaField("asset_id",     "STRING", mode="REQUIRED"),
         bigquery.SchemaField("column_name",  "STRING", mode="REQUIRED"),
         bigquery.SchemaField("data_type",    "STRING"),
@@ -334,7 +334,7 @@ def create_catalog_tables(client: bigquery.Client, project: str):
     ], cluster_fields=["asset_id"])
 
     # access_log_r: partition by timestamp (high-volume event stream)
-    _make_table(client, f"{base}.access_log_r", [
+    _make_table(client, f"{base}.access_log", [
         bigquery.SchemaField("event_id",   "STRING", mode="REQUIRED"),
         bigquery.SchemaField("page",       "STRING"),
         bigquery.SchemaField("action",     "STRING"),
@@ -356,7 +356,7 @@ def create_lineage_tables(client: bigquery.Client, project: str):
     base = f"{project}.risklens_lineage"
 
     # nodes_s: no partition (small, ~13 nodes); cluster for type-based traversal
-    _make_table(client, f"{base}.nodes_s", [
+    _make_table(client, f"{base}.nodes", [
         bigquery.SchemaField("node_id",    "STRING", mode="REQUIRED"),
         bigquery.SchemaField("name",       "STRING", mode="REQUIRED"),
         bigquery.SchemaField("type",       "STRING"),
@@ -367,7 +367,7 @@ def create_lineage_tables(client: bigquery.Client, project: str):
     ], cluster_fields=["type", "domain"])
 
     # edges_s: cluster by relationship type for graph traversal queries
-    _make_table(client, f"{base}.edges_s", [
+    _make_table(client, f"{base}.edges", [
         bigquery.SchemaField("edge_id",      "STRING", mode="REQUIRED"),
         bigquery.SchemaField("from_node_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("to_node_id",   "STRING", mode="REQUIRED"),
@@ -382,7 +382,7 @@ def create_lineage_tables(client: bigquery.Client, project: str):
 def create_embeddings_tables(client: bigquery.Client, project: str):
     base = f"{project}.risklens_embeddings"
 
-    _make_table(client, f"{base}.chunks_s", [
+    _make_table(client, f"{base}.chunks", [
         bigquery.SchemaField("chunk_id",    "STRING", mode="REQUIRED"),
         bigquery.SchemaField("asset_id",    "STRING"),
         bigquery.SchemaField("text",        "STRING"),
@@ -391,7 +391,7 @@ def create_embeddings_tables(client: bigquery.Client, project: str):
         bigquery.SchemaField("created_at",  "TIMESTAMP"),
     ], cluster_fields=["source_type", "domain"])
 
-    _make_table(client, f"{base}.vectors_s", [
+    _make_table(client, f"{base}.vectors", [
         bigquery.SchemaField("chunk_id",  "STRING", mode="REQUIRED"),
         bigquery.SchemaField("embedding", "FLOAT64", mode="REPEATED"),
     ])

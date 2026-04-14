@@ -56,8 +56,8 @@ def main() -> None:
     build_and_save(chunks, bucket=args.bucket)
 
     logger.info("=== Indexing complete ===")
-    logger.info("  BQ chunks:  %s.risklens_embeddings.chunks_s", args.project)
-    logger.info("  BQ vectors: %s.risklens_embeddings.vectors_s", args.project)
+    logger.info("  BQ chunks:  %s.risklens_embeddings.chunks", args.project)
+    logger.info("  BQ vectors: %s.risklens_embeddings.vectors", args.project)
     logger.info("  GCS index:  gs://%s/indexes/", args.bucket)
 
 
