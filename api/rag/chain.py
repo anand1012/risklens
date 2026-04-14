@@ -1,20 +1,21 @@
 """
 RiskLens — RAG Agent with BigQuery Tool
 Single-turn agent that:
-  1. Retrieves context via hybrid retriever (Vertex AI + BM25)
-  2. Streams answer via Claude, with access to a query_bigquery tool
-  3. OFF_TOPIC guard is embedded in _SYSTEM_PROMPT — no separate classifier call
+  1. Checks relevance (Haiku, fast) IN PARALLEL with retrieval — zero overhead for on-topic queries
+  2. Retrieves context via hybrid retriever (Vertex AI + BM25)
+  3. Streams answer via Claude, with access to a query_bigquery tool for live data
 
 OFF_TOPIC flow:
-  - Claude outputs "OFF_TOPIC" as its entire response for irrelevant queries
-  - stream_answer() detects this in the first ≤20 chars and yields _DECLINE_MESSAGE
-  - Saves one full LLM call vs the old pre-classifier approach
+  - _is_relevant() runs concurrently with retrieve() via asyncio.gather()
+  - If off-topic, decline is returned immediately; retrieval result is discarded
+  - On-topic queries pay no extra latency for the classifier
 
 BigQuery tool:
   - query_bigquery(sql) — Claude calls this for live data questions
   - Phase 1: stream with tool; Phase 2: if tool called, execute + stream continuation
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -31,7 +32,8 @@ from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-sonnet-4-6"
+_MODEL       = "claude-sonnet-4-6"
+_HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
 _SYSTEM_PROMPT = """You are RiskLens AI, an expert assistant for a financial data catalog \
 built for FRTB (Fundamental Review of the Trading Book) compliance.
@@ -53,10 +55,14 @@ Key datasets and tables:
   risklens_catalog  — assets, quality_scores, sla_status, ownership
   risklens_lineage  — nodes, edges
 
-Always be concise and precise — your audience are quantitative finance professionals.
+Always be concise and precise — your audience are quantitative finance professionals."""
 
-If the question is entirely unrelated to FRTB, financial data, risk management, or this \
-system, respond with exactly: OFF_TOPIC"""
+_RELEVANCE_PROMPT = (
+    "Reply YES if the query is about FRTB, financial risk, trading data, data catalogs, "
+    "data pipelines, regulatory compliance, or related financial/quantitative topics. "
+    "Reply NO for anything unrelated (cooking, sports, geography, general coding, etc.).\n"
+    "Query: "
+)
 
 _DECLINE_MESSAGE = (
     "I'm RiskLens AI — I specialise in FRTB compliance and financial data catalog topics. "
@@ -86,6 +92,25 @@ _BQ_TOOL_DEF = {
         "required": ["sql"],
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Relevance classifier (Haiku — fast and cheap)
+# ---------------------------------------------------------------------------
+
+async def _is_relevant(query: str, api_key: str) -> bool:
+    """
+    Binary relevance check using Haiku.
+    Runs concurrently with retrieve() so on-topic queries pay zero extra latency.
+    """
+    llm = ChatAnthropic(
+        model=_HAIKU_MODEL,
+        anthropic_api_key=api_key,
+        max_tokens=5,
+    )
+    response = await llm.ainvoke([HumanMessage(content=_RELEVANCE_PROMPT + query)])
+    text = _extract_text(response.content).strip().upper()
+    return text.startswith("Y")
 
 
 # ---------------------------------------------------------------------------
@@ -177,15 +202,34 @@ async def stream_answer(
     """
     Retrieve context then stream Claude's answer token by token.
     Yields SSE-formatted strings: 'data: ...\n\n'
+
+    Relevance check runs in parallel with retrieval — no latency overhead
+    for on-topic queries.
     """
     ant_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not ant_key:
         raise ValueError("ANTHROPIC_API_KEY not set")
 
-    docs = retrieve(
-        query=query, bm25_index=bm25_index, corpus=corpus,
-        bq_client=bq_client, project=project, top_k=top_k,
+    # Run relevance classifier and retrieval concurrently
+    relevant, docs = await asyncio.gather(
+        _is_relevant(query, ant_key),
+        asyncio.to_thread(
+            retrieve,
+            query=query,
+            bm25_index=bm25_index,
+            corpus=corpus,
+            bq_client=bq_client,
+            project=project,
+            top_k=top_k,
+        ),
     )
+
+    if not relevant:
+        yield f"data: __sources__{json.dumps([])}\n\n"
+        yield f"data: {json.dumps(_DECLINE_MESSAGE)}\n\n"
+        yield "data: __done__\n\n"
+        return
+
     logger.info("Retrieved %d docs for query: %.80s", len(docs), query)
 
     context_block = _build_context_block(docs)
@@ -202,43 +246,19 @@ async def stream_answer(
 
     yield f"data: __sources__{_sources_payload(docs)}\n\n"
 
-    # ── Phase 1: stream with tools ────────────────────────────────────────────
-    chunks: list = []
-    off_topic_buf = ""
-    off_topic_resolved = False
-
     run_cfg = {
         "run_name": "risklens_chat",
         "metadata": {"query": query, "top_k": top_k, "docs_retrieved": len(docs)},
     }
 
+    # ── Phase 1: stream with tools ────────────────────────────────────────────
+    chunks: list = []
+
     async for chunk in llm_with_tools.astream(messages, config=run_cfg):
         chunks.append(chunk)
         token = chunk.content if isinstance(chunk.content, str) else ""
-        if not token:
-            continue  # tool_call_chunks have no string content
-
-        if not off_topic_resolved:
-            off_topic_buf += token
-            # Wait until we have enough chars to make the call
-            if len(off_topic_buf) >= 20 or "\n" in off_topic_buf:
-                off_topic_resolved = True
-                if off_topic_buf.strip().upper().startswith("OFF_TOPIC"):
-                    yield f"data: {json.dumps(_DECLINE_MESSAGE)}\n\n"
-                    yield "data: __done__\n\n"
-                    return
-                yield f"data: {json.dumps(off_topic_buf)}\n\n"
-                off_topic_buf = ""
-        else:
+        if token:
             yield f"data: {json.dumps(token)}\n\n"
-
-    # Flush buffer if stream ended before we accumulated 20 chars
-    if not off_topic_resolved and off_topic_buf:
-        if off_topic_buf.strip().upper().startswith("OFF_TOPIC"):
-            yield f"data: {json.dumps(_DECLINE_MESSAGE)}\n\n"
-            yield "data: __done__\n\n"
-            return
-        yield f"data: {json.dumps(off_topic_buf)}\n\n"
 
     # ── Phase 2: execute tool call if present ─────────────────────────────────
     if chunks:
@@ -291,10 +311,23 @@ async def answer(
     if not ant_key:
         raise ValueError("ANTHROPIC_API_KEY not set")
 
-    docs = retrieve(
-        query=query, bm25_index=bm25_index, corpus=corpus,
-        bq_client=bq_client, project=project, top_k=top_k,
+    # Run relevance classifier and retrieval concurrently
+    relevant, docs = await asyncio.gather(
+        _is_relevant(query, ant_key),
+        asyncio.to_thread(
+            retrieve,
+            query=query,
+            bm25_index=bm25_index,
+            corpus=corpus,
+            bq_client=bq_client,
+            project=project,
+            top_k=top_k,
+        ),
     )
+
+    if not relevant:
+        return {"answer": _DECLINE_MESSAGE, "sources": [], "relevant": False}
+
     context_block = _build_context_block(docs)
     user_message = (
         f"Context from the RiskLens data catalog:\n\n{context_block}\n\n"
@@ -307,9 +340,6 @@ async def answer(
 
     response = await llm_with_tools.ainvoke(messages)
     content = _extract_text(response.content)
-
-    if content.strip().upper().startswith("OFF_TOPIC"):
-        return {"answer": _DECLINE_MESSAGE, "sources": [], "relevant": False}
 
     sources = [
         {
