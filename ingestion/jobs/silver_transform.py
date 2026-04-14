@@ -129,7 +129,7 @@ def update_quality_score(spark: SparkSession, project: str, bucket: str,
         .format("bigquery")
         .option("project",     project)
         .option("dataset",     "risklens_catalog")
-        .option("table",       "quality_scores_s")
+        .option("table",       "quality_scores")
         .option("writeMethod", "indirect")
         .option("temporaryGcsBucket", bucket)
         .mode("append")
