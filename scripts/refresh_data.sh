@@ -44,11 +44,10 @@ echo "--- Creating Dataproc cluster ---"
 gcloud dataproc clusters create "$CLUSTER_NAME" \
   --region="$REGION" \
   --single-node \
-  --master-machine-type="n1-standard-4" \
+  --master-machine-type="e2-standard-4" \
   --master-boot-disk-size=100 \
   --image-version="2.1-debian11" \
   --service-account="risklens-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --properties="spark:spark.jars.packages=com.google.cloud.spark:spark-bigquery-with-dependencies_2.12:0.36.1" \
   --quiet
 echo "  Cluster ready: $CLUSTER_NAME"
 
@@ -67,6 +66,7 @@ submit_job() {
     gcloud dataproc jobs submit pyspark "gs://${BUCKET_NAME}/jobs/${script}" \
         --cluster="$CLUSTER_NAME" \
         --region="$REGION" \
+        --jars="gs://spark-lib/bigquery/spark-bigquery-with-dependencies_2.12-0.36.1.jar" \
         --py-files="gs://${BUCKET_NAME}/jobs/generate.py" \
         -- \
         --project="$PROJECT_ID" \

@@ -36,21 +36,37 @@ from pyspark.sql import SparkSession
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bronze_synthetic")
 
-# Add project root to path so we can import generate.py
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from ingestion.synthetic.generate import (
-    gen_assets_catalog,
-    gen_desk_registry,
-    gen_lineage,
-    gen_ownership,
-    gen_pipeline_logs,
-    gen_pnl_vectors,
-    gen_quality_scores,
-    gen_schema_registry,
-    gen_sla_status,
-    gen_trades,
-    gen_var_es,
-)
+# On Dataproc, generate.py is added as a --py-file (flat import).
+# Locally it lives at ingestion/synthetic/generate.py.
+try:
+    from generate import (
+        gen_assets_catalog,
+        gen_desk_registry,
+        gen_lineage,
+        gen_ownership,
+        gen_pipeline_logs,
+        gen_pnl_vectors,
+        gen_quality_scores,
+        gen_schema_registry,
+        gen_sla_status,
+        gen_trades,
+        gen_var_es,
+    )
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from ingestion.synthetic.generate import (
+        gen_assets_catalog,
+        gen_desk_registry,
+        gen_lineage,
+        gen_ownership,
+        gen_pipeline_logs,
+        gen_pnl_vectors,
+        gen_quality_scores,
+        gen_schema_registry,
+        gen_sla_status,
+        gen_trades,
+        gen_var_es,
+    )
 
 import pandas as pd
 from datetime import timedelta
