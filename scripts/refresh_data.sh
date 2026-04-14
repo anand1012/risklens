@@ -15,6 +15,16 @@
 
 set -euo pipefail
 
+# Always delete cluster on exit (success or failure)
+cleanup() {
+    if [[ -n "${CLUSTER_NAME:-}" ]]; then
+        echo "--- Cleanup: deleting Dataproc cluster $CLUSTER_NAME ---"
+        gcloud dataproc clusters delete "$CLUSTER_NAME" \
+          --region="$REGION" --project="$PROJECT_ID" --quiet 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
 PROJECT_ID="${1:?Usage: ./refresh_data.sh YOUR_GCP_PROJECT_ID [--days N]}"
 REGION="us-central1"
 DAYS=1
@@ -48,6 +58,7 @@ gcloud dataproc clusters create "$CLUSTER_NAME" \
   --master-boot-disk-size=100 \
   --image-version="2.1-debian11" \
   --service-account="risklens-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --properties="dataproc:pip.packages=fredapi==0.5.0 yfinance==0.2.55" \
   --quiet
 echo "  Cluster ready: $CLUSTER_NAME"
 
@@ -68,11 +79,11 @@ submit_job() {
         --region="$REGION" \
         --jars="gs://spark-lib/bigquery/spark-bigquery-with-dependencies_2.12-0.36.1.jar" \
         --py-files="gs://${BUCKET_NAME}/jobs/generate.py" \
+        --quiet \
         -- \
         --project="$PROJECT_ID" \
         --bucket="$BUCKET_NAME" \
-        $extra_args \
-        --quiet
+        $extra_args
 }
 
 # ── Bronze layer (step 1): external sources in parallel ───────────────────────
@@ -113,13 +124,6 @@ echo "  Silver enrich complete."
 echo "--- Gold layer ---"
 submit_job "Gold: Aggregate" "gold_aggregate.py" "--date=$TODAY"
 echo "  Gold layer complete."
-
-# ── Delete cluster ────────────────────────────────────────────────────────────
-echo "--- Deleting Dataproc cluster ---"
-gcloud dataproc clusters delete "$CLUSTER_NAME" \
-  --region="$REGION" \
-  --quiet
-echo "  Cluster deleted."
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
