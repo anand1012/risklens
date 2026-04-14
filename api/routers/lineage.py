@@ -80,20 +80,14 @@ EDGE_STORIES: dict[tuple[str, str], dict] = {
         "frequency": "Concurrent with position aggregation",
         "owner": "Quant Analytics team",
     },
-    ("silver_risk_outputs", "silver_risk_enriched"): {
-        "title": "Risk Outputs → Market-Context Enrichment",
-        "what": "VaR/ES risk outputs joined with SOFR, VIX, and HY spread for the same calc_date.",
-        "business_impact": "Attaches the market regime in effect when each risk number was calculated — critical for audit and regulatory review. Regulators expect firms to demonstrate that IMA models respond correctly to market stress (VIX > 30, HY spread > 5%). Gold FRTB builders read this table so no bronze reads occur in the capital layer.",
-        "frequency": "Runs after silver_transform.py completes",
+    ("bronze_risk_outputs", "silver_risk_outputs"): {
+        "title": "Synthetic Risk → Cleaned Risk Outputs",
+        "what": "Raw synthetic VaR/ES/P&L outputs validated, null-filled, and normalised to a consistent schema for gold consumption.",
+        "business_impact": "Removes calc_date gaps and enforces consistent desk naming so gold-layer aggregations match the trade book. Any desk with missing risk figures for more than 2 consecutive days is flagged and its capital charge is frozen at the prior day's value pending restatement.",
+        "frequency": "Runs after bronze_synthetic ingestion",
         "owner": "Quant Analytics team",
     },
-    ("silver_rates", "silver_risk_enriched"): {
-        "title": "Validated Rates → Risk Factor Context",
-        "what": "SOFR, VIX, and ICE BofA HY spread pivoted and joined to each desk's daily risk output by calc_date.",
-        "business_impact": "Enables gold-layer FRTB analysis to correlate risk numbers with market regime without re-reading rates. VIX level on calc_date determines which stressed ES period applies under BCBS 457 ¶181.",
-        "frequency": "Concurrent with risk enrichment",
-        "owner": "Quant Analytics team",
-    },
+    # ── Gold: FRTB IMA Metrics (silver_risk_outputs is the direct input) ─────
     # ── Gold: Trade Positions ──────────────────────────────────────────────────
     ("silver_positions", "gold_trade_positions"): {
         "title": "Silver Positions → Gold Trade Positions",
@@ -103,21 +97,21 @@ EDGE_STORIES: dict[tuple[str, str], dict] = {
         "owner": "Quant Analytics team",
     },
     # ── Gold: FRTB IMA Metrics ─────────────────────────────────────────────────
-    ("silver_risk_enriched", "gold_backtesting"): {
+    ("silver_risk_outputs", "gold_backtesting"): {
         "title": "Enriched Risk → VaR Back-Testing (BCBS 457 ¶351-368)",
         "what": "VaR 99% 1-day compared against hypothetical and actual P&L to count back-testing exceptions over a 250-day rolling window.",
         "business_impact": "Under FRTB IMA, VaR is used ONLY for back-testing — not for capital. Exception counts determine the traffic light zone: GREEN (0-4) = no surcharge, AMBER (5-9) = +0.75× multiplier, RED (10+) = +1.0× multiplier on top of the 3× ES floor. More than 9 exceptions in a year can increase capital requirements by up to 33%.",
         "frequency": "Daily at 11:00 ET",
         "owner": "Quant Analytics team",
     },
-    ("silver_risk_enriched", "gold_es_outputs"): {
+    ("silver_risk_outputs", "gold_es_outputs"): {
         "title": "Enriched Risk → Expected Shortfall 97.5% (BCBS 457 ¶21-34)",
         "what": "ES 97.5% computed per desk with FRTB risk class assignment and liquidity horizon scaling (ES × √LH).",
         "business_impact": "ES is the regulatory capital metric under FRTB IMA — replacing VaR. Each risk class has a different liquidity horizon: GIRR/FX/EQ/COMM = 10 days, CSR Non-Securitisation = 20 days. Scaling ES to the correct horizon is mandatory; using the wrong LH overstates or understates capital by √(LH_wrong/LH_correct).",
         "frequency": "Concurrent with back-testing",
         "owner": "Quant Analytics team",
     },
-    ("silver_risk_enriched", "gold_pnl_vectors"): {
+    ("silver_risk_outputs", "gold_pnl_vectors"): {
         "title": "Enriched Risk → P&L Vectors (PLAT Input, BCBS 457 ¶329)",
         "what": "Hypothetical P&L (risk-factor-only) and actual P&L (realized) vectors per desk, with unexplained component.",
         "business_impact": "pnl_unexplained = actual − hypothetical. Large unexplained P&L indicates model error or new deals not captured by the risk model. This feeds the P&L Attribution Test — if unexplained P&L is too large relative to the model's std, the desk fails PLAT and loses IMA approval.",
