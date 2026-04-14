@@ -66,17 +66,30 @@ RISK_FACTOR_MAP = {
 
 def read_silver(spark: SparkSession, project: str, table: str,
                 trade_date: str | None = None) -> DataFrame:
-    query = f"SELECT * FROM `{project}.risklens_silver.{table}`"
+    df = (
+        spark.read
+        .format("bigquery")
+        .option("project", project)
+        .option("dataset", "risklens_silver")
+        .option("table", table)
+        .load()
+    )
     if trade_date:
-        query += f" WHERE trade_date = '{trade_date}'"
-    return spark.read.format("bigquery").option("parentProject", project).option("query", query).load()
+        df = df.filter(F.col("trade_date") == trade_date)
+    return df
 
 
 def read_gold_table(spark: SparkSession, project: str,
                     table: str, trade_date: str) -> DataFrame:
-    query = (f"SELECT * FROM `{project}.risklens_gold.{table}` "
-             f"WHERE trade_date = '{trade_date}'")
-    return spark.read.format("bigquery").option("parentProject", project).option("query", query).load()
+    return (
+        spark.read
+        .format("bigquery")
+        .option("project", project)
+        .option("dataset", "risklens_gold")
+        .option("table", table)
+        .load()
+        .filter(F.col("trade_date") == trade_date)
+    )
 
 
 def write_gold(df: DataFrame, project: str, bucket: str,
@@ -620,11 +633,14 @@ def build_rfet_results(spark: SparkSession, project: str,
 
     try:
         # Read full silver.rates history (no trade_date filter) to count all observations
-        rates = spark.read.format("bigquery") \
-            .option("parentProject", project) \
-            .option("query",
-                    f"SELECT series_id, date FROM `{project}.risklens_silver.rates`") \
+        rates = (
+            spark.read.format("bigquery")
+            .option("project", project)
+            .option("dataset", "risklens_silver")
+            .option("table", "rates")
             .load()
+            .select("series_id", "date")
+        )
     except Exception as e:
         log.warning(f"  Could not read silver.rates for RFET: {e}")
         return 0

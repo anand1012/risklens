@@ -42,10 +42,17 @@ log = logging.getLogger("silver_enrich")
 def read_silver(spark: SparkSession, project: str, table: str,
                 trade_date: str | None = None) -> DataFrame:
     """Read from cleaned silver layer, optionally filtered by trade_date."""
-    query = f"SELECT * FROM `{project}.risklens_silver.{table}`"
+    df = (
+        spark.read
+        .format("bigquery")
+        .option("project", project)
+        .option("dataset", "risklens_silver")
+        .option("table", table)
+        .load()
+    )
     if trade_date:
-        query += f" WHERE trade_date = '{trade_date}'"
-    return spark.read.format("bigquery").option("parentProject", project).option("query", query).load()
+        df = df.filter(F.col("trade_date") == trade_date)
+    return df
 
 
 def write_silver_enriched(df: DataFrame, project: str, bucket: str,

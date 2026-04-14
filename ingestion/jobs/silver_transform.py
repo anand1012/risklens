@@ -41,17 +41,17 @@ log = logging.getLogger("silver_transform")
 def read_bronze(spark: SparkSession, project: str, table: str,
                 trade_date: str | None = None) -> DataFrame:
     """Read from BigQuery bronze layer, optionally filtered by trade_date."""
-    query = f"SELECT * FROM `{project}.risklens_bronze.{table}`"
-    if trade_date:
-        query += f" WHERE trade_date = '{trade_date}'"
-
-    return (
+    df = (
         spark.read
         .format("bigquery")
-        .option("parentProject", project)
-        .option("query", query)
+        .option("project", project)
+        .option("dataset", "risklens_bronze")
+        .option("table", table)
         .load()
     )
+    if trade_date:
+        df = df.filter(F.col("trade_date") == trade_date)
+    return df
 
 
 def write_silver(df: DataFrame, project: str, bucket: str,
