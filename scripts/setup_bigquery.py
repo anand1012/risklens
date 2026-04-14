@@ -205,6 +205,40 @@ def create_silver_tables(client: bigquery.Client, project: str):
         bigquery.SchemaField("processed_at",  "TIMESTAMP"),
     ], partition_field="calc_date", cluster_fields=["desk"])
 
+    # silver_enrich.py: trades × prices × rates → mark-to-market positions
+    _make_table(client, f"{base}.positions", [
+        bigquery.SchemaField("asset_class",      "STRING"),
+        bigquery.SchemaField("currency",         "STRING"),
+        bigquery.SchemaField("total_notional",   "FLOAT64"),
+        bigquery.SchemaField("trade_count",      "INT64"),
+        bigquery.SchemaField("mark_price",       "FLOAT64"),
+        bigquery.SchemaField("market_value_usd", "FLOAT64"),
+        bigquery.SchemaField("sofr_rate",        "FLOAT64"),
+        bigquery.SchemaField("pv_usd",           "FLOAT64"),
+        bigquery.SchemaField("trade_date",       "STRING"),
+        bigquery.SchemaField("processed_at",     "TIMESTAMP"),
+    ], partition_field="trade_date", cluster_fields=["asset_class", "currency"])
+
+    # silver_enrich.py: risk_outputs × rates → market context per calc_date
+    _make_table(client, f"{base}.risk_enriched", [
+        bigquery.SchemaField("desk",          "STRING"),
+        bigquery.SchemaField("calc_date",     "DATE"),
+        bigquery.SchemaField("var_99_1d",     "FLOAT64"),
+        bigquery.SchemaField("var_99_10d",    "FLOAT64"),
+        bigquery.SchemaField("es_975_1d",     "FLOAT64"),
+        bigquery.SchemaField("es_975_10d",    "FLOAT64"),
+        bigquery.SchemaField("method",        "STRING"),
+        bigquery.SchemaField("scenarios",     "STRING"),
+        bigquery.SchemaField("num_scenarios", "INT64"),
+        bigquery.SchemaField("mean_pnl",      "FLOAT64"),
+        bigquery.SchemaField("std_pnl",       "FLOAT64"),
+        bigquery.SchemaField("sofr_rate",     "FLOAT64"),  # discount rate / GIRR factor
+        bigquery.SchemaField("vix_level",     "FLOAT64"),  # EQ vol regime
+        bigquery.SchemaField("hy_spread",     "FLOAT64"),  # credit regime (HY spread bps)
+        bigquery.SchemaField("trade_date",    "STRING"),
+        bigquery.SchemaField("processed_at",  "TIMESTAMP"),
+    ], partition_field="calc_date", cluster_fields=["desk"])
+
 
 # ── Gold ──────────────────────────────────────────────────────────────────────
 

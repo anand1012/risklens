@@ -1,6 +1,7 @@
 """
-RiskLens — Silver Layer: Clean, Validate, Normalize
+RiskLens — Silver Layer (Job 1 of 2): Clean, Validate, Normalize
 Reads from Bronze, applies quality rules, writes to Silver.
+Run this BEFORE silver_enrich.py.
 
 Rules applied per source:
   Trades  : Null checks, schema normalization, dedup by dissemination_id + trade_date
@@ -8,8 +9,8 @@ Rules applied per source:
   Prices  : Null checks, OHLCV sanity (high >= low, close in range), dedup by ticker + date
   Risk    : VaR/ES bounds check, P&L vector dimension check, dedup by desk + calc_date
 
-Bad records → risklens_bronze.quarantine (never deleted, full audit trail)
-Good records → risklens_silver.*
+Bad records → risklens_bronze.quarantine_r (never deleted, full audit trail)
+Good records → risklens_silver.{trades, rates, prices, risk_outputs}
 
 Usage (local):
     python ingestion/jobs/silver_transform.py \

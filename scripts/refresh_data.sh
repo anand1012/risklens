@@ -91,14 +91,19 @@ wait $PID_SYNTH   && echo "  synthetic: done" || { echo "  WARN: synthetic faile
 
 echo "  Bronze layer complete."
 
-# ── Silver layer: sequential (one date at a time) ─────────────────────────────
-echo "--- Silver layer ---"
-submit_job "Silver: Transform" "silver_transform.py" "--date=$TODAY"
-echo "  Silver layer complete."
+# ── Silver layer (Job 1): clean each source independently ─────────────────────
+echo "--- Silver layer: clean ---"
+submit_job "Silver: Transform (clean)" "silver_transform.py" "--date=$TODAY"
+echo "  Silver clean complete."
 
-# ── Gold layer: sequential (reads from silver + bronze) ──────────────────────
+# ── Silver layer (Job 2): join + enrich (depends on Job 1) ────────────────────
+echo "--- Silver layer: enrich ---"
+submit_job "Silver: Enrich (join)" "silver_enrich.py" "--date=$TODAY"
+echo "  Silver enrich complete."
+
+# ── Gold layer: FRTB IMA metrics (reads from silver only) ────────────────────
 echo "--- Gold layer ---"
-submit_job "Gold: Aggregate" "gold_aggregate.py" "--days=$DAYS"
+submit_job "Gold: Aggregate" "gold_aggregate.py" "--date=$TODAY"
 echo "  Gold layer complete."
 
 # ── Delete cluster ────────────────────────────────────────────────────────────

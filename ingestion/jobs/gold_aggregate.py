@@ -158,57 +158,22 @@ def update_sla_status(spark: SparkSession, project: str, bucket: str,
 def build_trade_positions(spark: SparkSession, project: str,
                           bucket: str, trade_date: str) -> int:
     """
-    Enriched trade positions:
-    silver.trades JOIN silver.prices ON currency + silver.rates for discount rate.
-    Produces desk-level positions with current market value and present value.
+    Gold trade positions from silver.positions.
+    silver_enrich.py already joined trades × prices × rates into silver.positions,
+    so this job just promotes the enriched silver table to gold with no additional join.
     """
     log.info("Building gold.trade_positions")
 
-    trades = read_silver(spark, project, "trades",  trade_date)
-    prices = read_silver(spark, project, "prices",  trade_date)
-    rates  = read_silver(spark, project, "rates",   trade_date)
+    positions = read_silver(spark, project, "positions", trade_date)
 
-    if trades.rdd.isEmpty():
-        log.info("  No silver trades — skipping trade_positions.")
+    if positions.rdd.isEmpty():
+        log.info("  No silver positions — skipping trade_positions.")
         return 0
 
-    latest_prices = prices.groupBy("ticker", "currency") \
-                          .agg(F.max("adj_close").alias("mark_price"))
+    gold_df = positions.withColumn("processed_at", F.current_timestamp())
 
-    # SOFR or Fed Funds as discount rate proxy
-    sofr_rate = rates.filter(
-        F.col("series_id").isin("SOFR", "DFF") & (F.col("trade_date") == trade_date)
-    ).agg(F.avg("value").alias("discount_rate"))
-
-    discount_rate = sofr_rate.collect()[0]["discount_rate"]
-    if discount_rate is None:
-        discount_rate = 0.05
-
-    positions = (
-        trades
-        .join(latest_prices, trades["currency"] == latest_prices["currency"], "left")
-        .withColumn("mark_price",       F.coalesce(F.col("mark_price"), F.lit(1.0)))
-        .withColumn("market_value_usd", F.col("notional_amount") * F.col("mark_price"))
-        .withColumn("discount_rate",    F.lit(discount_rate).cast(DoubleType()))
-        .withColumn("pv_usd",
-            F.col("market_value_usd") / (1 + F.col("discount_rate")))
-        .select(
-            F.col("dissemination_id").alias("trade_id"),
-            trades["currency"],
-            F.col("asset_class"),
-            F.col("underlying"),
-            F.col("notional_amount"),
-            F.col("mark_price"),
-            F.col("market_value_usd"),
-            F.col("discount_rate"),
-            F.col("pv_usd"),
-            F.col("trade_date"),
-            F.current_timestamp().alias("processed_at"),
-        )
-    )
-
-    return write_gold(positions, project, bucket, "trade_positions",
-                      partition_field="processed_at",
+    return write_gold(gold_df, project, bucket, "trade_positions",
+                      partition_field="trade_date",
                       cluster_fields="asset_class,currency")
 
 
@@ -229,9 +194,9 @@ def build_backtesting(spark: SparkSession, project: str,
     """
     log.info("Building gold.backtesting")
 
-    risk = read_silver(spark, project, "risk_outputs", trade_date)
+    risk = read_silver(spark, project, "risk_enriched", trade_date)
     if risk.rdd.isEmpty():
-        log.info("  No silver risk data — skipping backtesting.")
+        log.info("  No silver risk_enriched data — skipping backtesting.")
         return 0
 
     # Simulate hypothetical P&L from distribution N(mean_pnl, std_pnl)
@@ -338,9 +303,9 @@ def build_es_outputs(spark: SparkSession, project: str,
     """
     log.info("Building gold.es_outputs")
 
-    risk = read_silver(spark, project, "risk_outputs", trade_date)
+    risk = read_silver(spark, project, "risk_enriched", trade_date)
     if risk.rdd.isEmpty():
-        log.info("  No silver risk data — skipping es_outputs.")
+        log.info("  No silver risk_enriched data — skipping es_outputs.")
         return 0
 
     # Risk class and liquidity horizon per desk
@@ -409,9 +374,9 @@ def build_pnl_vectors(spark: SparkSession, project: str,
     """
     log.info("Building gold.pnl_vectors")
 
-    risk = read_silver(spark, project, "risk_outputs", trade_date)
+    risk = read_silver(spark, project, "risk_enriched", trade_date)
     if risk.rdd.isEmpty():
-        log.info("  No silver risk data — skipping pnl_vectors.")
+        log.info("  No silver risk_enriched data — skipping pnl_vectors.")
         return 0
 
     risk_class_expr = (
@@ -645,7 +610,8 @@ def build_rfet_results(spark: SparkSession, project: str,
     Risk factors that fail RFET cannot be used in IMA models and must be
     replaced with a proxy approved by the Risk Committee.
 
-    Source: bronze.rates_r (FRED series used as GIRR / FX / credit risk factors)
+    Source: silver.rates (cleaned FRED series — outliers flagged but not dropped,
+    so all real observations are counted; bronze-only missing values already removed)
     """
     log.info("Building gold.rfet_results")
 
@@ -653,12 +619,13 @@ def build_rfet_results(spark: SparkSession, project: str,
     cutoff_90d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=90)).strftime("%Y-%m-%d")
 
     try:
+        # Read full silver.rates history (no trade_date filter) to count all observations
         rates = spark.read.format("bigquery") \
             .option("query",
-                    f"SELECT series_id, date FROM `{project}.risklens_bronze.rates_r`") \
+                    f"SELECT series_id, date FROM `{project}.risklens_silver.rates`") \
             .load()
     except Exception as e:
-        log.warning(f"  Could not read bronze.rates_r for RFET: {e}")
+        log.warning(f"  Could not read silver.rates for RFET: {e}")
         return 0
 
     if rates.rdd.isEmpty():
