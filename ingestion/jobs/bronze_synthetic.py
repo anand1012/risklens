@@ -36,6 +36,7 @@ log = logging.getLogger("bronze_synthetic")
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from ingestion.synthetic.generate import (
     gen_assets_catalog,
+    gen_desk_registry,
     gen_lineage,
     gen_ownership,
     gen_pipeline_logs,
@@ -168,6 +169,10 @@ def main():
 
     log.info("Writing schema registry...")
     write_to_bigquery(spark, gen_schema_registry(), "risklens_catalog.schema_registry",
+                      args.project, args.bucket, mode="overwrite")
+
+    log.info("Writing desk registry...")
+    write_to_bigquery(spark, gen_desk_registry(), "risklens_catalog.desk_registry",
                       args.project, args.bucket, mode="overwrite")
 
     log.info("Bronze synthetic ingestion complete.")

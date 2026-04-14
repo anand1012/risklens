@@ -225,52 +225,133 @@ def create_gold_tables(client: bigquery.Client, project: str):
         bigquery.SchemaField("processed_at",     "TIMESTAMP"),
     ], partition_field="processed_at", cluster_fields=["asset_class", "currency"])
 
-    _make_table(client, f"{base}.var_outputs", [
-        bigquery.SchemaField("calc_date",    "DATE"),
-        bigquery.SchemaField("desk",         "STRING"),
-        bigquery.SchemaField("var_99_1d",    "FLOAT64"),
-        bigquery.SchemaField("var_99_10d",   "FLOAT64"),
-        bigquery.SchemaField("method",       "STRING"),
-        bigquery.SchemaField("scenarios",    "STRING"),
-        bigquery.SchemaField("trade_date",   "STRING"),
-        bigquery.SchemaField("processed_at", "TIMESTAMP"),
-    ], partition_field="calc_date", cluster_fields=["desk", "method"])
+    # backtesting: VaR 99% for back-testing ONLY (BCBS 457 ¶351-368)
+    # Not used for capital calculation — ES 97.5% is the capital metric
+    _make_table(client, f"{base}.backtesting", [
+        bigquery.SchemaField("calc_date",              "DATE"),
+        bigquery.SchemaField("desk",                   "STRING"),
+        bigquery.SchemaField("var_99_1d",              "FLOAT64"),
+        bigquery.SchemaField("var_99_10d",             "FLOAT64"),
+        bigquery.SchemaField("hypothetical_pnl",       "FLOAT64"),
+        bigquery.SchemaField("actual_pnl",             "FLOAT64"),
+        bigquery.SchemaField("hypothetical_exception", "INT64"),
+        bigquery.SchemaField("actual_exception",       "INT64"),
+        bigquery.SchemaField("exception_count_250d",   "INT64"),
+        bigquery.SchemaField("traffic_light_zone",     "STRING"),  # GREEN/AMBER/RED
+        bigquery.SchemaField("capital_multiplier",     "FLOAT64"), # 0.00/0.75/1.00
+        bigquery.SchemaField("method",                 "STRING"),
+        bigquery.SchemaField("trade_date",             "STRING"),
+        bigquery.SchemaField("processed_at",           "TIMESTAMP"),
+    ], partition_field="calc_date", cluster_fields=["desk", "traffic_light_zone"])
 
+    # es_outputs: ES 97.5% per desk × risk class × liquidity horizon (BCBS 457 ¶21-34)
     _make_table(client, f"{base}.es_outputs", [
-        bigquery.SchemaField("calc_date",    "DATE"),
-        bigquery.SchemaField("desk",         "STRING"),
-        bigquery.SchemaField("es_975_1d",    "FLOAT64"),
-        bigquery.SchemaField("es_975_10d",   "FLOAT64"),
-        bigquery.SchemaField("trade_date",   "STRING"),
-        bigquery.SchemaField("processed_at", "TIMESTAMP"),
-    ], partition_field="calc_date", cluster_fields=["desk"])
+        bigquery.SchemaField("calc_date",         "DATE"),
+        bigquery.SchemaField("desk",              "STRING"),
+        bigquery.SchemaField("risk_class",        "STRING"),  # GIRR/FX/CSR_NS/EQ/COMM
+        bigquery.SchemaField("liquidity_horizon", "INT64"),   # 10/20/40/60 days
+        bigquery.SchemaField("es_975_1d",         "FLOAT64"),
+        bigquery.SchemaField("es_975_10d",        "FLOAT64"),
+        bigquery.SchemaField("es_975_scaled",     "FLOAT64"), # ES × sqrt(liquidity_horizon)
+        bigquery.SchemaField("trade_date",        "STRING"),
+        bigquery.SchemaField("processed_at",      "TIMESTAMP"),
+    ], partition_field="calc_date", cluster_fields=["desk", "risk_class"])
 
+    # pnl_vectors: hypothetical + actual P&L per desk (PLAT input, BCBS 457 ¶329-345)
     _make_table(client, f"{base}.pnl_vectors", [
-        bigquery.SchemaField("calc_date",     "DATE"),
-        bigquery.SchemaField("desk",          "STRING"),
-        bigquery.SchemaField("scenarios",     "STRING"),
-        bigquery.SchemaField("num_scenarios", "INT64"),
-        bigquery.SchemaField("mean_pnl",      "FLOAT64"),
-        bigquery.SchemaField("std_pnl",       "FLOAT64"),
-        bigquery.SchemaField("trade_date",    "STRING"),
-        bigquery.SchemaField("processed_at",  "TIMESTAMP"),
-    ], partition_field="calc_date", cluster_fields=["desk"])
+        bigquery.SchemaField("calc_date",         "DATE"),
+        bigquery.SchemaField("desk",              "STRING"),
+        bigquery.SchemaField("risk_class",        "STRING"),
+        bigquery.SchemaField("hypothetical_pnl",  "FLOAT64"),  # risk-factor P&L only
+        bigquery.SchemaField("actual_pnl",        "FLOAT64"),  # realized trader P&L
+        bigquery.SchemaField("pnl_unexplained",   "FLOAT64"),  # actual - hypothetical
+        bigquery.SchemaField("scenarios",         "STRING"),
+        bigquery.SchemaField("num_scenarios",     "INT64"),
+        bigquery.SchemaField("mean_pnl",          "FLOAT64"),
+        bigquery.SchemaField("std_pnl",           "FLOAT64"),
+        bigquery.SchemaField("trade_date",        "STRING"),
+        bigquery.SchemaField("processed_at",      "TIMESTAMP"),
+    ], partition_field="calc_date", cluster_fields=["desk", "risk_class"])
 
-    _make_table(client, f"{base}.risk_summary", [
+    # plat_results: P&L Attribution Test — 3 statistical tests (BCBS 457 ¶329-345)
+    _make_table(client, f"{base}.plat_results", [
+        bigquery.SchemaField("calc_date",             "DATE"),
+        bigquery.SchemaField("desk",                  "STRING"),
+        bigquery.SchemaField("window_start_date",     "DATE"),
+        bigquery.SchemaField("window_end_date",       "DATE"),
+        bigquery.SchemaField("observation_count",     "INT64"),
+        bigquery.SchemaField("hyp_pnl_mean",          "FLOAT64"),
+        bigquery.SchemaField("hyp_pnl_std",           "FLOAT64"),
+        bigquery.SchemaField("actual_pnl_mean",       "FLOAT64"),
+        bigquery.SchemaField("upl_ratio",             "FLOAT64"), # pass if < 0.95
+        bigquery.SchemaField("upl_pass",              "BOOL"),
+        bigquery.SchemaField("spearman_correlation",  "FLOAT64"), # pass if > 0.40
+        bigquery.SchemaField("spearman_pass",         "BOOL"),
+        bigquery.SchemaField("ks_statistic",          "FLOAT64"), # pass if < 0.20
+        bigquery.SchemaField("ks_pass",               "BOOL"),
+        bigquery.SchemaField("plat_pass",             "BOOL"),    # True if all 3 pass
+        bigquery.SchemaField("notes",                 "STRING"),
+        bigquery.SchemaField("trade_date",            "STRING"),
+        bigquery.SchemaField("processed_at",          "TIMESTAMP"),
+    ], partition_field="calc_date", cluster_fields=["desk", "plat_pass"])
+
+    # capital_charge: regulatory capital = ES × (3.0 + multiplier) (BCBS 457 ¶180-186)
+    _make_table(client, f"{base}.capital_charge", [
         bigquery.SchemaField("calc_date",          "DATE"),
         bigquery.SchemaField("desk",               "STRING"),
-        bigquery.SchemaField("var_99_1d",          "FLOAT64"),
-        bigquery.SchemaField("var_99_10d",         "FLOAT64"),
+        bigquery.SchemaField("risk_class",         "STRING"),
+        bigquery.SchemaField("liquidity_horizon",  "INT64"),
         bigquery.SchemaField("es_975_1d",          "FLOAT64"),
-        bigquery.SchemaField("es_975_10d",         "FLOAT64"),
-        bigquery.SchemaField("mean_pnl",           "FLOAT64"),
-        bigquery.SchemaField("std_pnl",            "FLOAT64"),
-        bigquery.SchemaField("num_scenarios",      "INT64"),
-        bigquery.SchemaField("plat_pass",          "BOOL"),
-        bigquery.SchemaField("method",             "STRING"),
+        bigquery.SchemaField("es_975_scaled",      "FLOAT64"),
+        bigquery.SchemaField("traffic_light_zone", "STRING"),
+        bigquery.SchemaField("capital_multiplier", "FLOAT64"),
+        bigquery.SchemaField("regulatory_floor",   "FLOAT64"), # ES × 3.0
+        bigquery.SchemaField("capital_charge_usd", "FLOAT64"), # ES × (3.0 + multiplier)
+        bigquery.SchemaField("exception_count_250d","INT64"),
         bigquery.SchemaField("trade_date",         "STRING"),
-        bigquery.SchemaField("report_generated_at","TIMESTAMP"),
-    ], partition_field="calc_date", cluster_fields=["desk", "method"])
+        bigquery.SchemaField("processed_at",       "TIMESTAMP"),
+    ], partition_field="calc_date", cluster_fields=["desk", "risk_class"])
+
+    # rfet_results: Risk Factor Eligibility Test (BCBS 457 ¶76-80)
+    _make_table(client, f"{base}.rfet_results", [
+        bigquery.SchemaField("rfet_date",             "DATE"),
+        bigquery.SchemaField("risk_factor_id",        "STRING"),
+        bigquery.SchemaField("risk_class",            "STRING"),
+        bigquery.SchemaField("obs_12m_count",         "INT64"),   # need >= 75
+        bigquery.SchemaField("obs_90d_count",         "INT64"),   # need >= 25
+        bigquery.SchemaField("obs_12m_pass",          "BOOL"),
+        bigquery.SchemaField("obs_90d_pass",          "BOOL"),
+        bigquery.SchemaField("rfet_pass",             "BOOL"),
+        bigquery.SchemaField("eligible_for_ima",      "BOOL"),
+        bigquery.SchemaField("last_observation_date", "DATE"),
+        bigquery.SchemaField("staleness_days",        "INT64"),
+        bigquery.SchemaField("failure_reason",        "STRING"),
+        bigquery.SchemaField("processed_at",          "TIMESTAMP"),
+    ], partition_field="rfet_date", cluster_fields=["risk_class", "rfet_pass"])
+
+    # risk_summary: consolidated daily report (ES capital + PLAT + back-testing)
+    _make_table(client, f"{base}.risk_summary", [
+        bigquery.SchemaField("calc_date",             "DATE"),
+        bigquery.SchemaField("desk",                  "STRING"),
+        bigquery.SchemaField("risk_class",            "STRING"),
+        bigquery.SchemaField("liquidity_horizon",     "INT64"),
+        bigquery.SchemaField("var_99_1d",             "FLOAT64"),   # back-testing ref only
+        bigquery.SchemaField("var_99_10d",            "FLOAT64"),
+        bigquery.SchemaField("traffic_light_zone",    "STRING"),
+        bigquery.SchemaField("exception_count_250d",  "INT64"),
+        bigquery.SchemaField("es_975_1d",             "FLOAT64"),   # capital metric
+        bigquery.SchemaField("es_975_10d",            "FLOAT64"),
+        bigquery.SchemaField("es_975_scaled",         "FLOAT64"),
+        bigquery.SchemaField("plat_pass",             "BOOL"),
+        bigquery.SchemaField("upl_ratio",             "FLOAT64"),
+        bigquery.SchemaField("spearman_correlation",  "FLOAT64"),
+        bigquery.SchemaField("ks_statistic",          "FLOAT64"),
+        bigquery.SchemaField("plat_notes",            "STRING"),
+        bigquery.SchemaField("capital_charge_usd",    "FLOAT64"),
+        bigquery.SchemaField("capital_multiplier",    "FLOAT64"),
+        bigquery.SchemaField("trade_date",            "STRING"),
+        bigquery.SchemaField("report_generated_at",   "TIMESTAMP"),
+    ], partition_field="calc_date", cluster_fields=["desk", "risk_class"])
 
 
 # ── Catalog ───────────────────────────────────────────────────────────────────
@@ -333,7 +414,23 @@ def create_catalog_tables(client: bigquery.Client, project: str):
         bigquery.SchemaField("description",  "STRING"),
     ], cluster_fields=["asset_id"])
 
-    # access_log_r: partition by timestamp (high-volume event stream)
+    # desk_registry: FRTB IMA desk-level model approval and governance
+    _make_table(client, f"{base}.desk_registry", [
+        bigquery.SchemaField("desk_id",           "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("desk_name",         "STRING"),
+        bigquery.SchemaField("risk_class",        "STRING"),  # primary risk class
+        bigquery.SchemaField("business_line",     "STRING"),
+        bigquery.SchemaField("approved_by",       "STRING"),
+        bigquery.SchemaField("approval_date",     "DATE"),
+        bigquery.SchemaField("model_type",        "STRING"),  # Historical Sim / Monte Carlo
+        bigquery.SchemaField("num_scenarios",     "INT64"),
+        bigquery.SchemaField("risk_limit_usd",    "FLOAT64"),
+        bigquery.SchemaField("traffic_light_zone","STRING"),
+        bigquery.SchemaField("last_reviewed_date","DATE"),
+        bigquery.SchemaField("created_at",        "TIMESTAMP"),
+    ], cluster_fields=["risk_class", "business_line"])
+
+    # access_log: partition by timestamp (high-volume event stream)
     _make_table(client, f"{base}.access_log", [
         bigquery.SchemaField("event_id",   "STRING", mode="REQUIRED"),
         bigquery.SchemaField("page",       "STRING"),
