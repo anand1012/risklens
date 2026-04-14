@@ -12,6 +12,7 @@ For the current scope (single-turn Q&A) this is intentionally simple.
 Multi-turn memory can be layered on later via LangGraph checkpointing.
 """
 
+import json
 import logging
 import os
 from typing import AsyncGenerator, Optional, TypedDict
@@ -133,7 +134,7 @@ async def stream_answer(
     ):
         token = chunk.content
         if token:
-            yield f"data: {token}\n\n"
+            yield f"data: {json.dumps(token)}\n\n"
 
     yield "data: __done__\n\n"
 
