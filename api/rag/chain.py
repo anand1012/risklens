@@ -60,9 +60,13 @@ Key datasets and tables:
 Always be concise and precise — your audience are quantitative finance professionals."""
 
 _RELEVANCE_PROMPT = (
-    "Reply YES if the query is about FRTB, financial risk, trading data, data catalogs, "
-    "data pipelines, regulatory compliance, or related financial/quantitative topics. "
-    "Reply NO for anything unrelated (cooking, sports, geography, general coding, etc.).\n"
+    "You are a classifier for a financial data catalog system called RiskLens. "
+    "Reply YES if the query is about any of: FRTB, financial risk, trading data, "
+    "data catalogs, data pipelines, data lineage, database tables, BigQuery datasets, "
+    "regulatory compliance, data quality, data governance, or related financial/"
+    "quantitative/data-engineering topics in a banking or risk context. "
+    "Reply NO only for clearly unrelated topics (cooking, sports, general geography, "
+    "unrelated coding questions, etc.).\n"
     "Query: "
 )
 
