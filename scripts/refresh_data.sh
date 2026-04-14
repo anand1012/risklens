@@ -75,19 +75,27 @@ submit_job() {
         --quiet
 }
 
-# ── Bronze layer: run in parallel ─────────────────────────────────────────────
-echo "--- Bronze layer (parallel) ---"
+# ── Bronze layer (step 1): external sources in parallel ───────────────────────
+# Keep to 30 days — enough for RFET eligibility (90-day window) and back-testing
+# seed without pulling years of data unnecessarily.
+EXT_DAYS=30
+echo "--- Bronze layer step 1: external sources (parallel, --days=$EXT_DAYS) ---"
 
-submit_job "Bronze: DTCC trades"    "bronze_trades.py"    "--days=$DAYS" &  PID_TRADES=$!
-submit_job "Bronze: FRED rates"     "bronze_rates.py"     "--days=$DAYS" &  PID_RATES=$!
-submit_job "Bronze: Yahoo prices"   "bronze_prices.py"    "--days=$DAYS" &  PID_PRICES=$!
-submit_job "Bronze: Synthetic data" "bronze_synthetic.py" "--days=$DAYS" &  PID_SYNTH=$!
+submit_job "Bronze: DTCC trades"  "bronze_trades.py"  "--days=$EXT_DAYS" &  PID_TRADES=$!
+submit_job "Bronze: FRED rates"   "bronze_rates.py"   "--days=$EXT_DAYS" &  PID_RATES=$!
+submit_job "Bronze: Yahoo prices" "bronze_prices.py"  "--days=$EXT_DAYS" &  PID_PRICES=$!
 
-echo "  Waiting for bronze jobs..."
-wait $PID_TRADES  && echo "  trades: done"    || { echo "  WARN: trades failed"; }
-wait $PID_RATES   && echo "  rates: done"     || { echo "  WARN: rates failed";  }
-wait $PID_PRICES  && echo "  prices: done"    || { echo "  WARN: prices failed"; }
-wait $PID_SYNTH   && echo "  synthetic: done" || { echo "  WARN: synthetic failed"; }
+echo "  Waiting for external bronze jobs..."
+wait $PID_TRADES && echo "  trades: done"  || { echo "  WARN: trades failed"; }
+wait $PID_RATES  && echo "  rates: done"   || { echo "  WARN: rates failed";  }
+wait $PID_PRICES && echo "  prices: done"  || { echo "  WARN: prices failed"; }
+
+# ── Bronze layer (step 2): synthetic — reads real rates to seed VaR/ES ────────
+# Runs AFTER step 1 so bronze.rates_r is available for market param seeding.
+# Match EXT_DAYS so synthetic and real data cover the same date window.
+echo "--- Bronze layer step 2: synthetic (seeded from real rates, --days=$EXT_DAYS) ---"
+submit_job "Bronze: Synthetic data" "bronze_synthetic.py" "--days=$EXT_DAYS"
+echo "  synthetic: done"
 
 echo "  Bronze layer complete."
 

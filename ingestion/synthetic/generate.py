@@ -177,18 +177,53 @@ def gen_trades(date: datetime, n: int = 2000) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def gen_var_es(date: datetime) -> pd.DataFrame:
+def gen_var_es(date: datetime, market_params: dict | None = None) -> pd.DataFrame:
+    """
+    Generate VaR/ES per desk, scaled by real market conditions when available.
+
+    market_params keys (all optional, fall back to neutral defaults):
+      sofr      — SOFR rate on calc_date (neutral: 5.0%)
+      vix       — VIX level on calc_date  (neutral: 20.0)
+      hy_spread — ICE BofA HY spread bps  (neutral: 3.5%)
+
+    Scaling logic:
+      vol_scalar     = vix / 20.0          (1.0 = normal, 1.5 = elevated, 2.0 = stress)
+      Equities       → vol_scalar^1.2      (super-linear — most sensitive to VIX)
+      Credit         → vol_scalar × hy_spread/3.5  (spread widening amplifies credit VaR)
+      Rates          → vol_scalar × (1 + |sofr - 5| / 10)  (rate stress)
+      FX/Commodities → vol_scalar
+    """
+    sofr      = (market_params or {}).get("sofr",      5.0)
+    vix       = (market_params or {}).get("vix",       20.0)
+    hy_spread = (market_params or {}).get("hy_spread", 3.5)
+
+    vol_scalar = vix / 20.0
+
     rows = []
     for desk in DESKS:
         base_var = random.uniform(1_000_000, 50_000_000)
-        base_es  = base_var * random.uniform(1.2, 1.6)
+
+        if desk == "Rates":
+            desk_scalar = vol_scalar * (1.0 + abs(sofr - 5.0) / 10.0)
+        elif desk == "Credit":
+            desk_scalar = vol_scalar * (hy_spread / 3.5)
+        elif desk == "Equities":
+            desk_scalar = vol_scalar ** 1.2
+        elif desk == "FX":
+            desk_scalar = vol_scalar
+        else:  # Commodities
+            desk_scalar = vol_scalar * 1.1
+
+        var_1d = round(base_var * desk_scalar, 2)
+        es_1d  = round(var_1d * random.uniform(1.2, 1.6), 2)
+
         rows.append({
             "calc_date":    date.strftime("%Y-%m-%d"),
             "desk":         desk,
-            "var_99_1d":    round(base_var, 2),
-            "var_99_10d":   round(base_var * np.sqrt(10), 2),
-            "es_975_1d":    round(base_es, 2),
-            "es_975_10d":   round(base_es * np.sqrt(10), 2),
+            "var_99_1d":    var_1d,
+            "var_99_10d":   round(var_1d * np.sqrt(10), 2),
+            "es_975_1d":    es_1d,
+            "es_975_10d":   round(es_1d * np.sqrt(10), 2),
             "confidence":   0.99,
             "horizon_days": 1,
             "method":       "Historical Simulation",
@@ -198,10 +233,18 @@ def gen_var_es(date: datetime) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def gen_pnl_vectors(date: datetime) -> pd.DataFrame:
+def gen_pnl_vectors(date: datetime, market_params: dict | None = None) -> pd.DataFrame:
+    """
+    Generate P&L scenario vectors scaled by market volatility.
+    std_pnl ~ vol_scalar × base_std so P&L distributions widen in stress.
+    """
+    vix = (market_params or {}).get("vix", 20.0)
+    vol_scalar = vix / 20.0
+
     rows = []
     for desk in DESKS:
-        scenarios = np.random.normal(0, 1_000_000, 100).round(2).tolist()
+        base_std  = 1_000_000 * vol_scalar
+        scenarios = np.random.normal(0, base_std, 100).round(2).tolist()
         rows.append({
             "calc_date":    date.strftime("%Y-%m-%d"),
             "desk":         desk,
