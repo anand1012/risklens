@@ -13,6 +13,7 @@ SSE event format:
 Also logs each chat query to risklens_catalog.access_log for analytics.
 """
 
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ from api.db.bigquery import get_client, project
 from api.rag.chain import stream_answer
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -41,16 +43,20 @@ async def chat(req: ChatRequest, request: Request):
     _log_query(req.query, request)
 
     async def event_stream():
-        async for chunk in stream_answer(
-            query=req.query,
-            bm25_index=bm25,
-            corpus=corpus,
-            bq_client=bq_client,
-            project=project(),
-            top_k=req.top_k,
-            anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
-        ):
-            yield chunk
+        try:
+            async for chunk in stream_answer(
+                query=req.query,
+                bm25_index=bm25,
+                corpus=corpus,
+                bq_client=bq_client,
+                project=project(),
+                top_k=req.top_k,
+                anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
+            ):
+                yield chunk
+        except Exception as exc:
+            logger.error("Chat stream failed: %s", exc, exc_info=True)
+            yield "data: __done__\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
