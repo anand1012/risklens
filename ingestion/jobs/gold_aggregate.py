@@ -522,7 +522,7 @@ def build_plat_results(spark: SparkSession, project: str,
             ).otherwise(F.lit("ALL_PASS")),
         )
         .select(
-            F.lit(trade_date).alias("calc_date"),
+            F.to_date(F.lit(trade_date)).alias("calc_date"),
             F.col("desk"),
             F.col("window_start_date"),
             F.col("window_end_date"),
