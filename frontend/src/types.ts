@@ -44,12 +44,21 @@ export interface LineageNode {
   metadata: Record<string, unknown> | null
 }
 
+export interface EdgeStory {
+  title: string
+  what: string
+  business_impact: string
+  frequency: string
+  owner: string
+}
+
 export interface LineageEdge {
   edge_id: string
   from_node_id: string
   to_node_id: string
   relationship: string
   pipeline_job: string | null
+  story?: EdgeStory | null
 }
 
 export interface LineageGraph {

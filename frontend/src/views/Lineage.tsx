@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -19,7 +19,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import dagre from '@dagrejs/dagre'
 import { fetchLineageGraph } from '../api'
-import type { LineageNode } from '../types'
+import type { LineageNode, EdgeStory } from '../types'
 
 // ── Constants ───────────────────────────────────────────────────────────────
 const NODE_W = 210
@@ -81,7 +81,7 @@ const nodeTypes = { lineageNode: LineageNodeComponent }
 function applyDagreLayout(
   nodes: LineageNode[],
   rawEdges: import('../types').LineageEdge[],
-): { flowNodes: Node[]; flowEdges: Edge[] } {
+): { flowNodes: Node[]; flowEdges: Edge[]; storyMap: Map<string, EdgeStory> } {
   const g = new dagre.graphlib.Graph()
   g.setDefaultEdgeLabel(() => ({}))
   g.setGraph({ rankdir: 'LR', nodesep: 60, ranksep: 120, marginx: 40, marginy: 40 })
@@ -109,20 +109,25 @@ function applyDagreLayout(
     }
   })
 
-  const flowEdges: Edge[] = rawEdges.map((e) => ({
-    id: e.edge_id,
-    source: e.from_node_id,
-    target: e.to_node_id,
-    type: 'smoothstep',
-    animated: true,
-    label: e.relationship,
-    labelStyle: { fill: '#475569', fontSize: 10, fontFamily: 'monospace' },
-    labelBgStyle: { fill: '#0f172a', fillOpacity: 0.9 },
-    style: { stroke: '#6366f1', strokeWidth: 1.5 },
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1', width: 14, height: 14 },
-  }))
+  const storyMap = new Map<string, EdgeStory>()
+  const flowEdges: Edge[] = rawEdges.map((e) => {
+    if (e.story) storyMap.set(e.edge_id, e.story)
+    const hasStory = !!e.story
+    return {
+      id: e.edge_id,
+      source: e.from_node_id,
+      target: e.to_node_id,
+      type: 'smoothstep',
+      animated: true,
+      label: e.relationship,
+      labelStyle: { fill: hasStory ? '#818cf8' : '#475569', fontSize: 10, fontFamily: 'monospace', cursor: 'pointer' },
+      labelBgStyle: { fill: '#0f172a', fillOpacity: 0.9 },
+      style: { stroke: hasStory ? '#6366f1' : '#334155', strokeWidth: hasStory ? 2 : 1.5 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: hasStory ? '#6366f1' : '#334155', width: 14, height: 14 },
+    }
+  })
 
-  return { flowNodes, flowEdges }
+  return { flowNodes, flowEdges, storyMap }
 }
 
 // ── Main view ───────────────────────────────────────────────────────────────
@@ -139,10 +144,15 @@ export default function Lineage() {
     enabled: !!activeId,
   })
 
-  const { flowNodes, flowEdges } = useMemo(
-    () => graph ? applyDagreLayout(graph.nodes, graph.edges) : { flowNodes: [], flowEdges: [] },
-    [graph],
-  )
+  const [selectedStory, setSelectedStory] = useState<EdgeStory | null>(null)
+  const storyMapRef = useRef<Map<string, EdgeStory>>(new Map())
+
+  const { flowNodes, flowEdges, storyMap } = useMemo(() => {
+    if (!graph) return { flowNodes: [], flowEdges: [], storyMap: new Map<string, EdgeStory>() }
+    return applyDagreLayout(graph.nodes, graph.edges)
+  }, [graph])
+
+  storyMapRef.current = storyMap
 
   const [nodes, , onNodesChange] = useNodesState(flowNodes)
   const [edges, , onEdgesChange] = useEdgesState(flowEdges)
@@ -151,6 +161,11 @@ export default function Lineage() {
   const rfEdges = graph ? flowEdges : edges
 
   const onConnect = useCallback((_c: Connection) => {}, [])
+
+  const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
+    const story = storyMapRef.current.get(edge.id)
+    setSelectedStory(story ?? null)
+  }, [])
 
   return (
     <div className="flex flex-col" style={{ height: '100%', minHeight: '100vh' }}>
@@ -215,6 +230,7 @@ export default function Lineage() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onEdgeClick={onEdgeClick}
           fitView
           fitViewOptions={{ padding: 0.15 }}
           className="bg-slate-950"
@@ -236,6 +252,35 @@ export default function Lineage() {
             <div className="text-slate-500 font-semibold mb-2">Graph stats</div>
             <div className="text-slate-400">{graph.nodes.length} nodes · {graph.edges.length} edges</div>
             <div className="text-slate-400">{hops} hop{hops > 1 ? 's' : ''} radius</div>
+            <div className="text-slate-600 mt-2 italic">Click an arrow to see its story</div>
+          </div>
+        )}
+
+        {/* Edge story panel */}
+        {selectedStory && (
+          <div className="absolute bottom-4 left-4 right-4 mx-auto max-w-2xl bg-slate-900 border border-brand-600/60 rounded-xl shadow-2xl p-5 z-20">
+            <div className="flex items-start justify-between gap-4 mb-3">
+              <h3 className="text-sm font-semibold text-brand-400">{selectedStory.title}</h3>
+              <button
+                onClick={() => setSelectedStory(null)}
+                className="text-slate-500 hover:text-slate-300 text-lg leading-none flex-shrink-0"
+              >✕</button>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed mb-3">{selectedStory.what}</p>
+            <div className="bg-slate-800/60 rounded-lg p-3 mb-3">
+              <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Business Impact</div>
+              <p className="text-xs text-slate-300 leading-relaxed">{selectedStory.business_impact}</p>
+            </div>
+            <div className="flex gap-6">
+              <div>
+                <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-0.5">Frequency</div>
+                <div className="text-xs text-slate-400">{selectedStory.frequency}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-0.5">Owner</div>
+                <div className="text-xs text-slate-400">{selectedStory.owner}</div>
+              </div>
+            </div>
           </div>
         )}
       </div>
