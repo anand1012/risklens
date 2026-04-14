@@ -111,11 +111,14 @@ def _chunk_schema_registry(client: bigquery.Client, project: str) -> list[ChunkD
     for row in rows:
         col_lines = []
         for col in row.columns:
-            nullable = "nullable" if col.nullable else "required"
-            desc = col.description or ""
-            sample = f" (e.g. {col.sample_value})" if col.sample_value else ""
+            # BQ returns STRUCT elements as Row objects or dicts depending on client version
+            _get = (lambda f: col.get(f)) if isinstance(col, dict) else (lambda f: getattr(col, f, None))
+            nullable = "nullable" if _get("nullable") else "required"
+            desc = _get("description") or ""
+            sample_val = _get("sample_value")
+            sample = f" (e.g. {sample_val})" if sample_val else ""
             col_lines.append(
-                f"  - {col.column_name} ({col.data_type}, {nullable}){sample}: {desc}"
+                f"  - {_get('column_name')} ({_get('data_type')}, {nullable}){sample}: {desc}"
             )
         columns_text = "\n".join(col_lines)
         text = (
