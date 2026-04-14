@@ -85,13 +85,16 @@ def write_quarantine(df: DataFrame, project: str, bucket: str,
     """Write rejected records to quarantine table for audit."""
     if df.rdd.isEmpty():
         return
-    quarantine_df = df \
-        .withColumn("source_table",    F.lit(source)) \
-        .withColumn("rejection_reason",F.lit(reason)) \
-        .withColumn("quarantined_at",  F.current_timestamp()) \
-        .withColumn("trade_date",      F.lit(trade_date))
-
-    row_count = quarantine_df.count()
+    row_count = df.count()
+    # Select only metadata cols — all sources have different schemas so we
+    # cannot store full rows in a single table without schema conflicts.
+    quarantine_df = df.select(
+        F.lit(source).alias("source_table"),
+        F.lit(reason).alias("rejection_reason"),
+        F.current_timestamp().alias("quarantined_at"),
+        F.lit(trade_date).alias("trade_date"),
+        F.lit(row_count).alias("rejected_count"),
+    )
     (
         quarantine_df.write
         .format("bigquery")
@@ -100,9 +103,6 @@ def write_quarantine(df: DataFrame, project: str, bucket: str,
         .option("table",            "quarantine_r")
         .option("writeMethod",      "indirect")
         .option("temporaryGcsBucket", bucket)
-        .option("partitionField",   "quarantined_at")
-        .option("partitionType",    "DAY")
-        .option("clusteredFields",  "source_table,rejection_reason")
         .mode("append")
         .save()
     )
