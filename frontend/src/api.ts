@@ -123,7 +123,8 @@ export function streamChat(
           if (payload.startsWith('__sources__')) {
             try { onSource(JSON.parse(payload.slice(11))) } catch {}
           } else {
-            onToken(payload)
+            // Tokens are JSON-encoded on the backend to preserve newlines
+            try { onToken(JSON.parse(payload)) } catch { onToken(payload) }
           }
         }
       }
