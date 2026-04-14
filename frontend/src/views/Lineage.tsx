@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -6,10 +6,12 @@ import {
   Background,
   Controls,
   MiniMap,
+  Handle,
   useNodesState,
   useEdgesState,
   type Node,
   type Edge,
+  type NodeProps,
   type Connection,
   MarkerType,
   Position,
@@ -19,25 +21,70 @@ import dagre from '@dagrejs/dagre'
 import { fetchLineageGraph } from '../api'
 import type { LineageNode } from '../types'
 
-// ── Node dimensions used by dagre ──────────────────────────────────────────
+// ── Constants ───────────────────────────────────────────────────────────────
 const NODE_W = 210
-const NODE_H = 72
+const NODE_H = 70
 
-// ── Layer border colours ────────────────────────────────────────────────────
 const LAYER_BORDER: Record<string, string> = {
   bronze: '#b45309',
-  silver: '#64748b',
+  silver: '#475569',
   gold:   '#d97706',
 }
 
-// ── Run dagre LR layout and return positioned RF nodes + edges ─────────────
+const TYPE_ICON: Record<string, string> = {
+  source: '◉', pipeline: '⬡', table: '◻', report: '◈', model: '⬠',
+}
+
+const LAYER_COLOR: Record<string, string> = {
+  bronze: '#fbbf24',
+  silver: '#94a3b8',
+  gold:   '#fcd34d',
+}
+
+// ── Custom node (handles on left + right for LR flow) ──────────────────────
+function LineageNodeComponent({ data }: NodeProps) {
+  const node = data.node as LineageNode
+  return (
+    <>
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{ background: '#6366f1', width: 8, height: 8, border: '2px solid #0f172a' }}
+      />
+      <div className="flex flex-col gap-1.5 px-3 py-2.5">
+        <div className="flex items-center gap-1.5">
+          <span style={{ color: '#818cf8', fontSize: 13 }}>{TYPE_ICON[node.type] ?? '◻'}</span>
+          <span className="font-mono text-xs font-semibold text-slate-100 leading-tight" style={{ maxWidth: 148, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {node.name}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-medium" style={{ color: LAYER_COLOR[node.layer] ?? '#64748b' }}>
+            {node.layer}
+          </span>
+          <span className="text-[10px] text-slate-600">·</span>
+          <span className="text-[10px] text-slate-500">{node.domain}</span>
+        </div>
+      </div>
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{ background: '#6366f1', width: 8, height: 8, border: '2px solid #0f172a' }}
+      />
+    </>
+  )
+}
+
+const nodeTypes = { lineageNode: LineageNodeComponent }
+
+// ── Dagre LR layout ─────────────────────────────────────────────────────────
 function applyDagreLayout(
   nodes: LineageNode[],
   rawEdges: import('../types').LineageEdge[],
-) {
+): { flowNodes: Node[]; flowEdges: Edge[] } {
   const g = new dagre.graphlib.Graph()
   g.setDefaultEdgeLabel(() => ({}))
-  g.setGraph({ rankdir: 'LR', nodesep: 50, ranksep: 100, marginx: 40, marginy: 40 })
+  g.setGraph({ rankdir: 'LR', nodesep: 60, ranksep: 120, marginx: 40, marginy: 40 })
 
   nodes.forEach((n) => g.setNode(n.node_id, { width: NODE_W, height: NODE_H }))
   rawEdges.forEach((e) => g.setEdge(e.from_node_id, e.to_node_id))
@@ -47,19 +94,17 @@ function applyDagreLayout(
     const pos = g.node(n.node_id)
     return {
       id: n.node_id,
+      type: 'lineageNode',
       position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
-      sourcePosition: Position.Right,
-      targetPosition: Position.Left,
-      data: { label: <NodeCard node={n} /> },
+      data: { node: n },
       style: {
         background: '#0f172a',
         border: `1.5px solid ${LAYER_BORDER[n.layer] ?? '#334155'}`,
         borderRadius: 10,
-        padding: '10px 14px',
         color: '#f1f5f9',
-        fontSize: 12,
         width: NODE_W,
         minHeight: NODE_H,
+        padding: 0,
       },
     }
   })
@@ -71,43 +116,16 @@ function applyDagreLayout(
     type: 'smoothstep',
     animated: true,
     label: e.relationship,
-    labelStyle: { fill: '#64748b', fontSize: 10, fontFamily: 'monospace' },
-    labelBgStyle: { fill: '#0f172a', fillOpacity: 0.85 },
+    labelStyle: { fill: '#475569', fontSize: 10, fontFamily: 'monospace' },
+    labelBgStyle: { fill: '#0f172a', fillOpacity: 0.9 },
     style: { stroke: '#6366f1', strokeWidth: 1.5 },
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
+    markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1', width: 14, height: 14 },
   }))
 
   return { flowNodes, flowEdges }
 }
 
-// ── Node card component ────────────────────────────────────────────────────
-function NodeCard({ node }: { node: LineageNode }) {
-  const typeIcon: Record<string, string> = {
-    source: '◉', pipeline: '⬡', table: '◻', report: '◈', model: '⬠',
-  }
-  const layerColor: Record<string, string> = {
-    bronze: 'text-amber-600', silver: 'text-slate-400', gold: 'text-yellow-600',
-  }
-  return (
-    <div>
-      <div className="flex items-center gap-1.5 mb-1.5">
-        <span className="text-brand-400 text-sm">{typeIcon[node.type] ?? '◻'}</span>
-        <span className="font-mono text-xs font-semibold text-slate-100 truncate max-w-[150px]">
-          {node.name}
-        </span>
-      </div>
-      <div className="flex gap-1.5">
-        <span className={`text-[10px] font-medium ${layerColor[node.layer] ?? 'text-slate-500'}`}>
-          {node.layer}
-        </span>
-        <span className="text-[10px] text-slate-500">·</span>
-        <span className="text-[10px] text-slate-500">{node.domain}</span>
-      </div>
-    </div>
-  )
-}
-
-// ── Main view ──────────────────────────────────────────────────────────────
+// ── Main view ───────────────────────────────────────────────────────────────
 export default function Lineage() {
   const { assetId } = useParams<{ assetId: string }>()
   const navigate = useNavigate()
@@ -121,9 +139,10 @@ export default function Lineage() {
     enabled: !!activeId,
   })
 
-  const { flowNodes, flowEdges } = graph
-    ? applyDagreLayout(graph.nodes, graph.edges)
-    : { flowNodes: [], flowEdges: [] }
+  const { flowNodes, flowEdges } = useMemo(
+    () => graph ? applyDagreLayout(graph.nodes, graph.edges) : { flowNodes: [], flowEdges: [] },
+    [graph],
+  )
 
   const [nodes, , onNodesChange] = useNodesState(flowNodes)
   const [edges, , onEdgesChange] = useEdgesState(flowEdges)
@@ -141,7 +160,6 @@ export default function Lineage() {
           <h1 className="text-xl font-semibold text-slate-100">Data Lineage</h1>
           {activeId && <p className="text-slate-500 text-xs mt-0.5 font-mono">{activeId}</p>}
         </div>
-
         <div className="flex items-center gap-3 ml-auto">
           <input
             className="input w-56 text-sm font-mono"
@@ -193,6 +211,7 @@ export default function Lineage() {
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
+          nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -205,10 +224,8 @@ export default function Lineage() {
           <Controls className="[&>button]:bg-slate-800 [&>button]:border-slate-700 [&>button]:text-slate-300" />
           <MiniMap
             nodeColor={(n) => {
-              const border = (n.style?.border as string) ?? ''
-              return border.includes('#b45309') ? '#92400e'
-                   : border.includes('#d97706') ? '#78350f'
-                   : '#334155'
+              const b = (n.style?.border as string) ?? ''
+              return b.includes('#b45309') ? '#92400e' : b.includes('#d97706') ? '#78350f' : '#334155'
             }}
             className="bg-slate-900 border border-slate-800 rounded-xl"
           />
