@@ -217,7 +217,7 @@ def create_silver_tables(client: bigquery.Client, project: str):
         bigquery.SchemaField("pv_usd",           "FLOAT64"),
         bigquery.SchemaField("trade_date",       "STRING"),
         bigquery.SchemaField("processed_at",     "TIMESTAMP"),
-    ], partition_field="trade_date", cluster_fields=["asset_class", "currency"])
+    ], partition_field="processed_at", cluster_fields=["asset_class", "currency"])
 
     # silver_enrich.py: risk_outputs × rates → market context per calc_date
     _make_table(client, f"{base}.risk_enriched", [
