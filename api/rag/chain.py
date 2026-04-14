@@ -44,9 +44,11 @@ You help risk managers, data stewards, and quants with:
 - Data quality, ownership, and SLA status
 - FRTB-specific concepts (VaR, ES, P&L Attribution, NMRF, BCBS 239, RFET, PLAT)
 
-You have access to a query_bigquery tool. Use it when the question requires live data \
-(e.g. current breaches, actual risk values, row counts, SLA status, desk-level metrics). \
-For conceptual or schema questions, use the provided context.
+You have access to a query_bigquery tool. Use it ONLY when the question explicitly asks \
+for live/current data: which desks are breaching, actual numeric values, row counts, \
+SLA status, pass/fail results, or desk-level metrics from today's run. \
+Do NOT use the tool for: regulatory definitions, FRTB methodology, threshold explanations, \
+schema descriptions, or lineage questions — answer those from your knowledge and the context.
 
 BigQuery project: risklens-frtb-2026
 Key datasets and tables:
@@ -187,6 +189,25 @@ def _extract_text(content) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Fallback: non-streaming answer when streaming/reduce fails
+# ---------------------------------------------------------------------------
+
+async def _fallback_answer(messages, ant_key: str, run_cfg: dict):
+    """
+    Async generator: yields a single SSE token from a plain (no-tool) ainvoke.
+    Used when Phase 1 streaming or chunk-merge fails and no text was yielded yet.
+    """
+    llm = ChatAnthropic(model=_MODEL, anthropic_api_key=ant_key, max_tokens=1024)
+    try:
+        resp = await llm.ainvoke(messages, config=run_cfg)
+        text = _extract_text(resp.content)
+        if text:
+            yield f"data: {json.dumps(text)}\n\n"
+    except Exception as exc:
+        logger.error("Fallback invocation failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Streaming entry point (used by chat router)
 # ---------------------------------------------------------------------------
 
@@ -251,21 +272,47 @@ async def stream_answer(
         "metadata": {"query": query, "top_k": top_k, "docs_retrieved": len(docs)},
     }
 
+    plain_llm = ChatAnthropic(
+        model=_MODEL, anthropic_api_key=ant_key, streaming=True, max_tokens=1024,
+    )
+
     # ── Phase 1: stream with tools ────────────────────────────────────────────
     chunks: list = []
+    text_yielded = False
 
-    async for chunk in llm_with_tools.astream(messages, config=run_cfg):
-        chunks.append(chunk)
-        token = chunk.content if isinstance(chunk.content, str) else ""
-        if token:
-            yield f"data: {json.dumps(token)}\n\n"
+    try:
+        async for chunk in llm_with_tools.astream(messages, config=run_cfg):
+            chunks.append(chunk)
+            content = chunk.content
+            if isinstance(content, str):
+                token = content
+            elif isinstance(content, list):
+                token = "".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            else:
+                token = ""
+            if token:
+                text_yielded = True
+                yield f"data: {json.dumps(token)}\n\n"
+    except Exception as exc:
+        logger.error("Phase 1 stream error: %s", exc, exc_info=True)
+        if not text_yielded:
+            async for tok in _fallback_answer(messages, ant_key, run_cfg):
+                yield tok
+        yield "data: __done__\n\n"
+        return
 
     # ── Phase 2: execute tool call if present ─────────────────────────────────
     if chunks:
         try:
             full_msg = reduce(add, chunks)
         except Exception as exc:
-            logger.warning("Could not merge stream chunks: %s", exc)
+            logger.warning("Could not merge stream chunks (%s) — using fallback", exc)
+            if not text_yielded:
+                async for tok in _fallback_answer(messages, ant_key, run_cfg):
+                    yield tok
             yield "data: __done__\n\n"
             return
 
@@ -282,13 +329,22 @@ async def stream_answer(
                 full_msg,
                 ToolMessage(content=tool_result, tool_call_id=tc["id"]),
             ]
-            plain_llm = ChatAnthropic(
-                model=_MODEL, anthropic_api_key=ant_key, streaming=True, max_tokens=1024,
-            )
-            async for chunk in plain_llm.astream(follow_up, config=run_cfg):
-                token = chunk.content if isinstance(chunk.content, str) else ""
-                if token:
-                    yield f"data: {json.dumps(token)}\n\n"
+            try:
+                async for chunk in plain_llm.astream(follow_up, config=run_cfg):
+                    content = chunk.content
+                    if isinstance(content, str):
+                        token = content
+                    elif isinstance(content, list):
+                        token = "".join(
+                            b.get("text", "") for b in content
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        )
+                    else:
+                        token = ""
+                    if token:
+                        yield f"data: {json.dumps(token)}\n\n"
+            except Exception as exc:
+                logger.error("Phase 2 stream error: %s", exc, exc_info=True)
 
     yield "data: __done__\n\n"
 
