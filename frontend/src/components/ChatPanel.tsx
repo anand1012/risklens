@@ -135,9 +135,9 @@ export default function ChatPanel({ open, onClose }: Props) {
                                   text-slate-200 whitespace-pre-wrap leading-relaxed">
                     {msg.streaming && msg.content === '' ? (
                       <span className="flex items-center gap-1 h-5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-bounce [animation-delay:0ms]" />
-                        <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-bounce [animation-delay:150ms]" />
-                        <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-bounce [animation-delay:300ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ backgroundColor: '#818cf8', animationDelay: '0ms' }} />
+                        <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ backgroundColor: '#818cf8', animationDelay: '150ms' }} />
+                        <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ backgroundColor: '#818cf8', animationDelay: '300ms' }} />
                       </span>
                     ) : (
                       <>
