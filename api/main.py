@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from langsmith import Client as LangSmithClient
 
 from api.db.bigquery import get_client
-from api.routers import catalog, chat, governance, lineage, search
+from api.routers import catalog, chat, governance, lineage, risk, search
 from indexing.bm25_index import load_from_gcs
 
 logging.basicConfig(
@@ -94,11 +94,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(catalog.router, prefix="/api")
-app.include_router(lineage.router, prefix="/api")
+app.include_router(catalog.router,    prefix="/api")
+app.include_router(lineage.router,    prefix="/api")
 app.include_router(governance.router, prefix="/api")
-app.include_router(search.router, prefix="/api")
-app.include_router(chat.router, prefix="/api")
+app.include_router(risk.router,       prefix="/api")
+app.include_router(search.router,     prefix="/api")
+app.include_router(chat.router,       prefix="/api")
 
 
 @app.get("/health", tags=["meta"])

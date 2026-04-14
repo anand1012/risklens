@@ -2,6 +2,10 @@
 RiskLens — Bronze Layer: Synthetic Internal Data Ingestion
 Runs the synthetic data generator and loads results into BigQuery bronze layer.
 
+IMPORTANT: Run this AFTER bronze_rates.py and bronze_prices.py have completed.
+This job reads SOFR, VIX, and HY spread from bronze.rates_r to seed the
+synthetic VaR/ES numbers so they reflect real market conditions.
+
 Synthetic assets loaded:
   - Risk outputs  : VaR, ES, P&L vectors (seeded from real FRED/Yahoo inputs)
   - Pipeline logs : Spark job run history
@@ -18,7 +22,7 @@ Usage (local):
         --days 30
 
 Usage (Dataproc):
-    Submitted via refresh_data.sh
+    Submitted via refresh_data.sh (after bronze_rates + bronze_prices)
 """
 
 import argparse
@@ -36,6 +40,7 @@ log = logging.getLogger("bronze_synthetic")
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from ingestion.synthetic.generate import (
     gen_assets_catalog,
+    gen_desk_registry,
     gen_lineage,
     gen_ownership,
     gen_pipeline_logs,
@@ -54,12 +59,12 @@ from datetime import timedelta
 BRONZE_TABLES = {
     "risk_outputs":   "risklens_bronze.risk_outputs_s",
     "pipeline_logs":  "risklens_bronze.pipeline_logs_s",
-    "ownership":      "risklens_catalog.ownership_s",
-    "quality_scores": "risklens_catalog.quality_scores_s",
-    "sla_status":     "risklens_catalog.sla_status_s",
-    "assets":         "risklens_catalog.assets_s",
-    "lineage_nodes":  "risklens_lineage.nodes_s",
-    "lineage_edges":  "risklens_lineage.edges_s",
+    "ownership":      "risklens_catalog.ownership",
+    "quality_scores": "risklens_catalog.quality_scores",
+    "sla_status":     "risklens_catalog.sla_status",
+    "assets":         "risklens_catalog.assets",
+    "lineage_nodes":  "risklens_lineage.nodes",
+    "lineage_edges":  "risklens_lineage.edges",
 }
 
 
@@ -97,6 +102,73 @@ def write_to_bigquery(spark: SparkSession, df_pd: pd.DataFrame,
     log.info(f"  {table}: {row_count:,} rows written")
 
 
+def load_market_params(spark: SparkSession, project: str,
+                       start_date: datetime, end_date: datetime) -> dict:
+    """
+    Read SOFR/DFF, VIX, and HY spread from bronze.rates_r for each date
+    in [start_date, end_date]. Returns dict keyed by date string.
+
+    Falls back to neutral defaults (SOFR=5, VIX=20, HY=3.5) for any missing date
+    so synthetic generation always succeeds even with sparse real data.
+    """
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str   = end_date.strftime("%Y-%m-%d")
+
+    try:
+        df = (
+            spark.read.format("bigquery")
+            .option("query", f"""
+                SELECT
+                    CAST(date AS STRING) AS date,
+                    series_id,
+                    value
+                FROM `{project}.risklens_bronze.rates_r`
+                WHERE series_id IN ('SOFR', 'DFF', 'VIXCLS', 'BAMLH0A0HYM2')
+                  AND date BETWEEN '{start_str}' AND '{end_str}'
+                  AND value IS NOT NULL
+            """)
+            .load()
+        )
+        rows = df.collect()
+        log.info(f"  Loaded {len(rows)} market param rows from bronze.rates_r")
+    except Exception as e:
+        log.warning(f"  Could not read bronze.rates_r for seeding: {e}. Using neutral defaults.")
+        return {}
+
+    # Build per-date param dict
+    params: dict[str, dict] = {}
+    for row in rows:
+        d = row["date"]
+        if d not in params:
+            params[d] = {}
+        sid = row["series_id"]
+        val = float(row["value"]) if row["value"] is not None else None
+        if val is None:
+            continue
+        if sid in ("SOFR", "DFF") and "sofr" not in params[d]:
+            params[d]["sofr"] = val           # prefer SOFR, fall back to DFF
+        elif sid == "SOFR":
+            params[d]["sofr"] = val           # SOFR always wins over DFF
+        elif sid == "VIXCLS":
+            params[d]["vix"] = val
+        elif sid == "BAMLH0A0HYM2":
+            params[d]["hy_spread"] = val
+
+    # Forward-fill missing dates from nearest prior date
+    defaults = {"sofr": 5.0, "vix": 20.0, "hy_spread": 3.5}
+    last_known = dict(defaults)
+    current = start_date
+    while current <= end_date:
+        d = current.strftime("%Y-%m-%d")
+        if d in params:
+            last_known = {**last_known, **params[d]}
+        params[d] = dict(last_known)
+        current += timedelta(days=1)
+
+    log.info(f"  Market params ready for {len(params)} dates")
+    return params
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
@@ -117,14 +189,20 @@ def main():
 
     log.info(f"Generating synthetic data for {args.days} days")
 
+    # ── Load real market params to seed synthetic risk numbers ────────────────
+    log.info("Loading market params from bronze.rates_r...")
+    market_params = load_market_params(spark, args.project, start_date, end_date)
+
     # ── Daily data (generated per trading day) ────────────────────────────────
     all_var_es, all_pnl, all_logs, all_quality, all_sla = [], [], [], [], []
 
     current = start_date
     while current <= end_date:
         if current.weekday() < 5:
-            all_var_es.append(gen_var_es(current))
-            all_pnl.append(gen_pnl_vectors(current))
+            date_str = current.strftime("%Y-%m-%d")
+            params   = market_params.get(date_str)  # None falls back to defaults inside generators
+            all_var_es.append(gen_var_es(current, params))
+            all_pnl.append(gen_pnl_vectors(current, params))
             all_logs.append(gen_pipeline_logs(current))
             all_quality.append(gen_quality_scores(current))
             all_sla.append(gen_sla_status(current))
@@ -143,31 +221,35 @@ def main():
     if all_quality:
         quality_df = pd.concat(all_quality, ignore_index=True)
         log.info(f"Writing quality scores ({len(quality_df):,} rows)...")
-        write_to_bigquery(spark, quality_df, "risklens_catalog.quality_scores_s", args.project, args.bucket)
+        write_to_bigquery(spark, quality_df, "risklens_catalog.quality_scores", args.project, args.bucket)
 
     if all_sla:
         sla_df = pd.concat(all_sla, ignore_index=True)
         log.info(f"Writing SLA status ({len(sla_df):,} rows)...")
-        write_to_bigquery(spark, sla_df, "risklens_catalog.sla_status_s", args.project, args.bucket)
+        write_to_bigquery(spark, sla_df, "risklens_catalog.sla_status", args.project, args.bucket)
 
     # ── Static data (overwrite on each run) ───────────────────────────────────
     log.info("Writing ownership registry...")
-    write_to_bigquery(spark, gen_ownership(), "risklens_catalog.ownership_s",
+    write_to_bigquery(spark, gen_ownership(), "risklens_catalog.ownership",
                       args.project, args.bucket, mode="overwrite")
 
     log.info("Writing asset catalog...")
-    write_to_bigquery(spark, gen_assets_catalog(), "risklens_catalog.assets_s",
+    write_to_bigquery(spark, gen_assets_catalog(), "risklens_catalog.assets",
                       args.project, args.bucket, mode="overwrite")
 
     log.info("Writing lineage graph...")
     nodes, edges = gen_lineage()
-    write_to_bigquery(spark, nodes, "risklens_lineage.nodes_s",
+    write_to_bigquery(spark, nodes, "risklens_lineage.nodes",
                       args.project, args.bucket, mode="overwrite")
-    write_to_bigquery(spark, edges, "risklens_lineage.edges_s",
+    write_to_bigquery(spark, edges, "risklens_lineage.edges",
                       args.project, args.bucket, mode="overwrite")
 
     log.info("Writing schema registry...")
-    write_to_bigquery(spark, gen_schema_registry(), "risklens_catalog.schema_registry_s",
+    write_to_bigquery(spark, gen_schema_registry(), "risklens_catalog.schema_registry",
+                      args.project, args.bucket, mode="overwrite")
+
+    log.info("Writing desk registry...")
+    write_to_bigquery(spark, gen_desk_registry(), "risklens_catalog.desk_registry",
                       args.project, args.bucket, mode="overwrite")
 
     log.info("Bronze synthetic ingestion complete.")

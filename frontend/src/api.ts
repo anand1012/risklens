@@ -1,6 +1,7 @@
 import type {
   Asset, AssetDetail, SchemaColumn,
   LineageGraph, SlaRecord, OwnershipRecord, QualityScore, SearchResult,
+  RiskSummaryRow, CapitalChargeRow, BacktestingRow, PlatRow, RfetRow, EsRow,
 } from './types'
 
 const BASE = '/api'
@@ -42,6 +43,43 @@ export const fetchQuality = (params?: { freshness_status?: string; schema_drift?
   if (params?.freshness_status) q.set('freshness_status', params.freshness_status)
   if (params?.schema_drift !== undefined) q.set('schema_drift', String(params.schema_drift))
   return get<QualityScore[]>(`/governance/quality${q.size ? `?${q}` : ''}`)
+}
+
+// FRTB Risk
+export const fetchRiskSummary  = (trade_date?: string, desk?: string) => {
+  const q = new URLSearchParams()
+  if (trade_date) q.set('trade_date', trade_date)
+  if (desk)       q.set('desk', desk)
+  return get<RiskSummaryRow[]>(`/risk/summary${q.size ? `?${q}` : ''}`)
+}
+export const fetchCapitalCharge = (trade_date?: string, risk_class?: string) => {
+  const q = new URLSearchParams()
+  if (trade_date)  q.set('trade_date', trade_date)
+  if (risk_class)  q.set('risk_class', risk_class)
+  return get<CapitalChargeRow[]>(`/risk/capital${q.size ? `?${q}` : ''}`)
+}
+export const fetchBacktesting = (trade_date?: string, zone?: string) => {
+  const q = new URLSearchParams()
+  if (trade_date) q.set('trade_date', trade_date)
+  if (zone)       q.set('zone', zone)
+  return get<BacktestingRow[]>(`/risk/backtesting${q.size ? `?${q}` : ''}`)
+}
+export const fetchPlat = (trade_date?: string) => {
+  const q = new URLSearchParams()
+  if (trade_date) q.set('trade_date', trade_date)
+  return get<PlatRow[]>(`/risk/plat${q.size ? `?${q}` : ''}`)
+}
+export const fetchRfet = (rfet_date?: string, risk_class?: string) => {
+  const q = new URLSearchParams()
+  if (rfet_date)  q.set('rfet_date', rfet_date)
+  if (risk_class) q.set('risk_class', risk_class)
+  return get<RfetRow[]>(`/risk/rfet${q.size ? `?${q}` : ''}`)
+}
+export const fetchEs = (trade_date?: string, risk_class?: string) => {
+  const q = new URLSearchParams()
+  if (trade_date) q.set('trade_date', trade_date)
+  if (risk_class) q.set('risk_class', risk_class)
+  return get<EsRow[]>(`/risk/es${q.size ? `?${q}` : ''}`)
 }
 
 // Search

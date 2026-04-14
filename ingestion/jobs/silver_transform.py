@@ -1,6 +1,7 @@
 """
-RiskLens — Silver Layer: Clean, Validate, Normalize
+RiskLens — Silver Layer (Job 1 of 2): Clean, Validate, Normalize
 Reads from Bronze, applies quality rules, writes to Silver.
+Run this BEFORE silver_enrich.py.
 
 Rules applied per source:
   Trades  : Null checks, schema normalization, dedup by dissemination_id + trade_date
@@ -8,8 +9,8 @@ Rules applied per source:
   Prices  : Null checks, OHLCV sanity (high >= low, close in range), dedup by ticker + date
   Risk    : VaR/ES bounds check, P&L vector dimension check, dedup by desk + calc_date
 
-Bad records → risklens_bronze.quarantine (never deleted, full audit trail)
-Good records → risklens_silver.*
+Bad records → risklens_bronze.quarantine_r (never deleted, full audit trail)
+Good records → risklens_silver.{trades, rates, prices, risk_outputs}
 
 Usage (local):
     python ingestion/jobs/silver_transform.py \
@@ -53,10 +54,13 @@ def read_bronze(spark: SparkSession, project: str, table: str,
 
 
 def write_silver(df: DataFrame, project: str, bucket: str,
-                 table: str, mode: str = "append"):
+                 table: str, mode: str = "append",
+                 partition_field: str | None = None,
+                 partition_type: str = "DAY",
+                 cluster_fields: str | None = None) -> int:
     """Write cleaned DataFrame to BigQuery silver layer."""
     row_count = df.count()
-    (
+    writer = (
         df.write
         .format("bigquery")
         .option("project",     project)
@@ -64,9 +68,13 @@ def write_silver(df: DataFrame, project: str, bucket: str,
         .option("table",       table)
         .option("writeMethod", "indirect")
         .option("temporaryGcsBucket", bucket)
-        .mode(mode)
-        .save()
     )
+    if partition_field:
+        writer = writer.option("partitionField", partition_field) \
+                       .option("partitionType",  partition_type)
+    if cluster_fields:
+        writer = writer.option("clusteredFields", cluster_fields)
+    writer.mode(mode).save()
     log.info(f"  risklens_silver.{table}: {row_count:,} rows written")
     return row_count
 
@@ -86,11 +94,14 @@ def write_quarantine(df: DataFrame, project: str, bucket: str,
     (
         quarantine_df.write
         .format("bigquery")
-        .option("project",     project)
-        .option("dataset",     "risklens_bronze")
-        .option("table",       "quarantine")
-        .option("writeMethod", "indirect")
+        .option("project",          project)
+        .option("dataset",          "risklens_bronze")
+        .option("table",            "quarantine_r")
+        .option("writeMethod",      "indirect")
         .option("temporaryGcsBucket", bucket)
+        .option("partitionField",   "quarantined_at")
+        .option("partitionType",    "DAY")
+        .option("clusteredFields",  "source_table,rejection_reason")
         .mode("append")
         .save()
     )
@@ -133,7 +144,7 @@ def transform_trades(spark: SparkSession, project: str, bucket: str, trade_date:
     """Bronze → Silver for DTCC trade data."""
     log.info(f"Transforming trades for {trade_date}")
 
-    df = read_bronze(spark, project, "trades", trade_date)
+    df = read_bronze(spark, project, "trades_r", trade_date)
     total = df.count()
 
     if total == 0:
@@ -178,7 +189,8 @@ def transform_trades(spark: SparkSession, project: str, bucket: str, trade_date:
     )
 
     nulls_count = bad_df.count()
-    write_silver(silver_df, project, bucket, "trades")
+    write_silver(silver_df, project, bucket, "trades",
+                 partition_field="trade_date", cluster_fields="asset_class,currency")
     update_quality_score(spark, project, bucket, "silver_trades",
                          total, nulls_count, dupes, False, trade_date)
 
@@ -187,7 +199,7 @@ def transform_rates(spark: SparkSession, project: str, bucket: str, trade_date: 
     """Bronze → Silver for FRED rate series."""
     log.info(f"Transforming rates for {trade_date}")
 
-    df = read_bronze(spark, project, "rates", trade_date)
+    df = read_bronze(spark, project, "rates_r", trade_date)
     total = df.count()
 
     if total == 0:
@@ -231,7 +243,8 @@ def transform_rates(spark: SparkSession, project: str, bucket: str, trade_date: 
         F.current_timestamp().alias("processed_at"),
     )
 
-    write_silver(silver_df, project, bucket, "rates")
+    write_silver(silver_df, project, bucket, "rates",
+                 partition_field="date", cluster_fields="series_id,domain")
     update_quality_score(spark, project, bucket, "silver_rates",
                          total, nulls_count, dupes, False, trade_date)
 
@@ -240,7 +253,7 @@ def transform_prices(spark: SparkSession, project: str, bucket: str, trade_date:
     """Bronze → Silver for Yahoo Finance price data."""
     log.info(f"Transforming prices for {trade_date}")
 
-    df = read_bronze(spark, project, "prices", trade_date)
+    df = read_bronze(spark, project, "prices_r", trade_date)
     total = df.count()
 
     if total == 0:
@@ -294,7 +307,8 @@ def transform_prices(spark: SparkSession, project: str, bucket: str, trade_date:
         F.current_timestamp().alias("processed_at"),
     )
 
-    write_silver(silver_df, project, bucket, "prices")
+    write_silver(silver_df, project, bucket, "prices",
+                 partition_field="date", cluster_fields="ticker,asset_class,currency")
     update_quality_score(spark, project, bucket, "silver_prices",
                          total, nulls_count, dupes, False, trade_date)
 
@@ -303,7 +317,7 @@ def transform_risk(spark: SparkSession, project: str, bucket: str, trade_date: s
     """Bronze → Silver for synthetic risk outputs (VaR, ES, P&L vectors)."""
     log.info(f"Transforming risk outputs for {trade_date}")
 
-    df = read_bronze(spark, project, "risk_outputs", trade_date)
+    df = read_bronze(spark, project, "risk_outputs_s", trade_date)
     total = df.count()
 
     if total == 0:
@@ -336,7 +350,8 @@ def transform_risk(spark: SparkSession, project: str, bucket: str, trade_date: s
 
     silver_df  = good_df.withColumn("processed_at", F.current_timestamp())
 
-    write_silver(silver_df, project, bucket, "risk_outputs")
+    write_silver(silver_df, project, bucket, "risk_outputs",
+                 partition_field="calc_date", cluster_fields="desk")
     update_quality_score(spark, project, bucket, "silver_risk_outputs",
                          total, nulls_count, dupes, False, trade_date)
 

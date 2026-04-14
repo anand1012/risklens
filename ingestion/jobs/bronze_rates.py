@@ -42,16 +42,28 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bronze_rates")
 
 FRED_SERIES = {
-    "DFF":          {"name": "Fed Funds Rate",               "frequency": "daily",   "domain": "rates"},
-    "DGS2":         {"name": "2Y Treasury Yield",            "frequency": "daily",   "domain": "rates"},
-    "DGS10":        {"name": "10Y Treasury Yield",           "frequency": "daily",   "domain": "rates"},
-    "DGS30":        {"name": "30Y Treasury Yield",           "frequency": "daily",   "domain": "rates"},
-    "BAMLH0A0HYM2": {"name": "HY Credit Spread (ICE BofA)", "frequency": "daily",   "domain": "credit"},
-    "DEXUSEU":      {"name": "USD/EUR Exchange Rate",        "frequency": "daily",   "domain": "fx"},
-    "DEXUSUK":      {"name": "USD/GBP Exchange Rate",        "frequency": "daily",   "domain": "fx"},
-    "DEXJPUS":      {"name": "JPY/USD Exchange Rate",        "frequency": "daily",   "domain": "fx"},
-    "CPIAUCSL":     {"name": "CPI (All Urban Consumers)",    "frequency": "monthly", "domain": "macro"},
-    "VIXCLS":       {"name": "CBOE VIX",                    "frequency": "daily",   "domain": "volatility"},
+    # GIRR — USD Risk-Free Rates (post-LIBOR transition, SOFR-based)
+    "SOFR":         {"name": "SOFR (Secured Overnight Financing Rate)", "frequency": "daily",   "domain": "rates"},
+    "SOFR30DAYAVG": {"name": "SOFR 30-Day Average",                    "frequency": "daily",   "domain": "rates"},
+    "SOFR90DAYAVG": {"name": "SOFR 90-Day Average",                    "frequency": "daily",   "domain": "rates"},
+    # GIRR — USD Treasury Curve (benchmark risk factors for FRTB IMA GIRR)
+    "DFF":          {"name": "Fed Funds Rate (pre-SOFR reference)",     "frequency": "daily",   "domain": "rates"},
+    "DGS2":         {"name": "2Y Treasury Yield",                       "frequency": "daily",   "domain": "rates"},
+    "DGS10":        {"name": "10Y Treasury Yield",                      "frequency": "daily",   "domain": "rates"},
+    "DGS30":        {"name": "30Y Treasury Yield",                      "frequency": "daily",   "domain": "rates"},
+    # CSR_NS — Credit Spread Risk (Non-Securitisation)
+    "BAMLH0A0HYM2": {"name": "HY Credit Spread ICE BofA (CSR_NS)",     "frequency": "daily",   "domain": "credit"},
+    "BAMLC0A0CM":   {"name": "IG Credit Spread ICE BofA (CSR_NS)",     "frequency": "daily",   "domain": "credit"},
+    # FX — spot exchange rates
+    "DEXUSEU":      {"name": "USD/EUR Exchange Rate",                   "frequency": "daily",   "domain": "fx"},
+    "DEXUSUK":      {"name": "USD/GBP Exchange Rate",                   "frequency": "daily",   "domain": "fx"},
+    "DEXJPUS":      {"name": "JPY/USD Exchange Rate",                   "frequency": "daily",   "domain": "fx"},
+    # COMM — Commodity prices
+    "DCOILWTICO":   {"name": "WTI Crude Oil Spot Price",                "frequency": "daily",   "domain": "commodity"},
+    # EQ — Equity volatility proxy
+    "VIXCLS":       {"name": "CBOE VIX (EQ volatility)",               "frequency": "daily",   "domain": "volatility"},
+    # MACRO — Inflation risk factor
+    "CPIAUCSL":     {"name": "CPI All Urban Consumers (Inflation)",     "frequency": "monthly", "domain": "macro"},
 }
 
 BRONZE_SCHEMA = StructType([
@@ -142,11 +154,14 @@ def main():
     (
         df.write
         .format("bigquery")
-        .option("project",     args.project)
-        .option("dataset",     "risklens_bronze")
-        .option("table",       "rates")
-        .option("writeMethod", "indirect")
+        .option("project",          args.project)
+        .option("dataset",          "risklens_bronze")
+        .option("table",            "rates_r")
+        .option("writeMethod",      "indirect")
         .option("temporaryGcsBucket", args.bucket)
+        .option("partitionField",   "date")
+        .option("partitionType",    "DAY")
+        .option("clusteredFields",  "series_id,domain")
         .mode("append")
         .save()
     )

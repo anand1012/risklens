@@ -1,8 +1,8 @@
 """
 RiskLens — Vertex AI Embedder
 Embeds ChunkDocs using Vertex AI text-embedding-004 and writes results to BigQuery:
-  - risklens_embeddings.chunks_s  — text + metadata
-  - risklens_embeddings.vectors_s — chunk_id + embedding (FLOAT64 REPEATED, 768-dim)
+  - risklens_embeddings.chunks  — text + metadata
+  - risklens_embeddings.vectors — chunk_id + embedding (FLOAT64 REPEATED, 768-dim)
 
 Uses Workload Identity — no API key required.
 
@@ -57,8 +57,8 @@ def embed_and_store(
     model = _init_vertexai(project)
     bq = bigquery.Client(project=project)
 
-    chunks_table = f"{project}.risklens_embeddings.chunks_s"
-    vectors_table = f"{project}.risklens_embeddings.vectors_s"
+    chunks_table = f"{project}.risklens_embeddings.chunks"
+    vectors_table = f"{project}.risklens_embeddings.vectors"
 
     if truncate:
         logger.info("Truncating embedding tables…")

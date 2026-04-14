@@ -155,11 +155,14 @@ def main():
     (
         df.write
         .format("bigquery")
-        .option("project",     args.project)
-        .option("dataset",     "risklens_bronze")
-        .option("table",       "prices")
-        .option("writeMethod", "indirect")
+        .option("project",          args.project)
+        .option("dataset",          "risklens_bronze")
+        .option("table",            "prices_r")
+        .option("writeMethod",      "indirect")
         .option("temporaryGcsBucket", args.bucket)
+        .option("partitionField",   "date")
+        .option("partitionType",    "DAY")
+        .option("clusteredFields",  "ticker,asset_class,currency")
         .mode("append")
         .save()
     )
