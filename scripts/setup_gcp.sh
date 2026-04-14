@@ -81,7 +81,7 @@ echo "  Service account: ${SA_EMAIL}"
 
 # ── Secret Manager ────────────────────────────────────────────────────────────
 echo "--- Creating secrets in Secret Manager ---"
-for secret in anthropic-api-key cohere-api-key fred-api-key; do
+for secret in anthropic-api-key fred-api-key; do
   gcloud secrets create "risklens-${secret}" \
     --replication-policy="automatic" \
     --quiet 2>/dev/null || echo "  Secret risklens-${secret} already exists."
@@ -90,7 +90,6 @@ done
 echo ""
 echo "  Add your API keys now:"
 echo "    echo -n 'YOUR_KEY' | gcloud secrets versions add risklens-anthropic-api-key --data-file=-"
-echo "    echo -n 'YOUR_KEY' | gcloud secrets versions add risklens-cohere-api-key --data-file=-"
 echo "    echo -n 'YOUR_KEY' | gcloud secrets versions add risklens-fred-api-key --data-file=-"
 
 # ── GKE Cluster ───────────────────────────────────────────────────────────────

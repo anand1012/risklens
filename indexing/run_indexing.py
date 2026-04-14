@@ -46,7 +46,7 @@ def main() -> None:
     logger.info("Chunks ready: %d", len(chunks))
 
     # ── Step 2: embed ────────────────────────────────────────────────────────
-    logger.info("=== Step 2/3: Generating Cohere embeddings → BigQuery ===")
+    logger.info("=== Step 2/3: Generating Vertex AI embeddings → BigQuery ===")
     from indexing.embedder import embed_and_store
     embed_and_store(chunks, project=args.project, truncate=args.truncate)
 

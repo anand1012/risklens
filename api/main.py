@@ -11,7 +11,6 @@ Environment variables required:
   GCP_PROJECT            — GCP project ID (default: risklens-frtb-2026)
   GCS_BUCKET             — GCS bucket with BM25 index (default: risklens-frtb-2026-indexes)
   ANTHROPIC_API_KEY      — for Claude (chat endpoint)
-  COHERE_API_KEY         — for embeddings (chat endpoint)
 
 LangSmith tracing (optional — omit to disable):
   LANGCHAIN_TRACING_V2   — set to "true" to enable
