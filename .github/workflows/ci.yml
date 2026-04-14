@@ -11,6 +11,7 @@ on:
 env:
   PROJECT: risklens-frtb-2026
   REGION: us-central1
+  ZONE: us-central1-a
   CLUSTER: risklens-cluster
   AR_REPO: risklens
   NAMESPACE: risklens
@@ -126,7 +127,7 @@ jobs:
         uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: ${{ env.CLUSTER }}
-          location: ${{ env.REGION }}
+          location: ${{ env.ZONE }}
           project_id: ${{ env.PROJECT }}
 
       - name: Ensure namespace exists

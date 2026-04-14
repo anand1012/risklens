@@ -4,13 +4,14 @@
 #
 # Usage:
 #   export PROJECT=risklens-frtb-2026
-#   export REGION=us-central1
+#   export ZONE=us-central1-a
 #   bash infra/setup_gke.sh
 
 set -euo pipefail
 
 PROJECT="${PROJECT:-risklens-frtb-2026}"
-REGION="${REGION:-us-central1}"
+ZONE="${ZONE:-us-central1-a}"
+REGION="${ZONE%-*}"   # strip zone suffix → us-central1
 CLUSTER="risklens-cluster"
 AR_REPO="risklens"
 GCP_SA="risklens-api-sa"
@@ -19,7 +20,7 @@ NAMESPACE="risklens"
 
 echo "=== RiskLens GKE Setup ==="
 echo "  Project : $PROJECT"
-echo "  Region  : $REGION"
+echo "  Zone    : $ZONE"
 echo "  Cluster : $CLUSTER"
 echo ""
 
@@ -46,18 +47,17 @@ echo "  Static IP: $IP  →  point your DNS A record here"
 echo "--- Creating GKE Standard cluster ---"
 gcloud container clusters create "$CLUSTER" \
     --project="$PROJECT" \
-    --region="$REGION" \
+    --zone="$ZONE" \
     --num-nodes=1 \
-    --machine-type="e2-standard-2" \
+    --machine-type="e2-medium" \
+    --disk-size=30 \
     --workload-pool="${PROJECT}.svc.id.goog" \
-    --enable-autoscaling \
-    --min-nodes=1 \
-    --max-nodes=3 \
+    --no-enable-autoscaling \
     --enable-ip-alias \
     --quiet 2>/dev/null || echo "  (already exists)"
 
 gcloud container clusters get-credentials "$CLUSTER" \
-    --region="$REGION" \
+    --zone="$ZONE" \
     --project="$PROJECT"
 
 # ── GCP Service Account ──────────────────────────────────────────────────────
