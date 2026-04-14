@@ -6,12 +6,24 @@ GET /assets/{asset_id}        full asset detail (asset + ownership + quality + S
 GET /assets/{asset_id}/schema columns for an asset
 """
 
+import json
+
 from fastapi import APIRouter, Query
 from typing import Optional
 
 from api.db.bigquery import query_rows, project
 
 router = APIRouter(prefix="/assets", tags=["catalog"])
+
+
+def _fix_tags(row: dict) -> dict:
+    """BigQuery stores tags as a JSON string — parse it to a list."""
+    if isinstance(row.get("tags"), str):
+        try:
+            row["tags"] = json.loads(row["tags"])
+        except Exception:
+            row["tags"] = []
+    return row
 
 
 @router.get("")
@@ -62,7 +74,7 @@ def list_assets(
         ORDER BY a.domain, a.layer, a.name
         LIMIT {limit}
     """
-    return query_rows(sql)
+    return [_fix_tags(r) for r in query_rows(sql)]
 
 
 @router.get("/{asset_id}")
@@ -94,7 +106,7 @@ def get_asset(asset_id: str):
     if not rows:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found")
-    return rows[0]
+    return _fix_tags(rows[0])
 
 
 @router.get("/{asset_id}/schema")
