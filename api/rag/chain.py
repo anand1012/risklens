@@ -41,6 +41,55 @@ Always ground your answers in the provided context. If the context does not cont
 enough information to answer, say so clearly rather than guessing.
 Be concise and precise — your audience are quantitative finance professionals."""
 
+_RELEVANCE_PROMPT = """You are a query classifier for RiskLens, a financial data catalog \
+for FRTB (Fundamental Review of the Trading Book) compliance.
+
+Classify the following question as RELEVANT or IRRELEVANT.
+
+RELEVANT topics include:
+- FRTB, Basel III/IV, regulatory capital, VaR, Expected Shortfall (ES)
+- P&L Attribution Test (PLAT), back-testing, NMRF, risk factor eligibility (RFET)
+- Data tables, schemas, lineage, data quality, SLA, data catalog
+- Risk desks, trading books, capital charges, market risk
+- The RiskLens pipeline (bronze/silver/gold layers, Spark jobs, BigQuery)
+- Any question about the data, tables, metrics, or system in this catalog
+
+IRRELEVANT topics include:
+- General knowledge (history, science, geography, cooking, sports, weather)
+- Programming unrelated to this system, entertainment, personal advice
+- Anything clearly outside financial risk data management
+
+Reply with ONLY the single word: RELEVANT or IRRELEVANT"""
+
+_DECLINE_MESSAGE = (
+    "I'm RiskLens AI, specialized in FRTB compliance and financial data catalog topics. "
+    "Your question appears to be outside my area of expertise. "
+    "I can help you with questions about:\n"
+    "- FRTB regulatory metrics (VaR, ES, capital charges, back-testing)\n"
+    "- Data tables, schemas, and lineage in the RiskLens catalog\n"
+    "- Data quality, SLA status, and pipeline details\n\n"
+    "Please ask a question related to the RiskLens system or FRTB risk data."
+)
+
+
+async def _is_relevant(query: str, ant_key: str) -> bool:
+    """Fast relevance classifier — uses a single-token response for minimal latency."""
+    llm = ChatAnthropic(
+        model=_MODEL,
+        anthropic_api_key=ant_key,
+        max_tokens=5,
+    )
+    messages = [
+        SystemMessage(content=_RELEVANCE_PROMPT),
+        HumanMessage(content=f"Question: {query}"),
+    ]
+    try:
+        response = await llm.ainvoke(messages)
+        return "IRRELEVANT" not in response.content.upper()
+    except Exception as e:
+        logger.warning("Relevance check failed (%s) — defaulting to relevant", e)
+        return True  # fail open: if classifier errors, let it through
+
 
 # ---------------------------------------------------------------------------
 # LangGraph state
@@ -85,6 +134,14 @@ async def stream_answer(
     ant_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not ant_key:
         raise ValueError("ANTHROPIC_API_KEY not set")
+
+    # ── Off-topic guard ───────────────────────────────────────────────────────
+    if not await _is_relevant(query, ant_key):
+        logger.info("Off-topic query rejected: %.80s", query)
+        yield f"data: __sources__{json.dumps([])}\n\n"
+        yield f"data: {json.dumps(_DECLINE_MESSAGE)}\n\n"
+        yield "data: __done__\n\n"
+        return
 
     # Retrieve (Vertex AI embeddings use Workload Identity — no extra key)
     docs = retrieve(
@@ -172,6 +229,11 @@ async def answer(
     ant_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not ant_key:
         raise ValueError("ANTHROPIC_API_KEY not set")
+
+    # ── Off-topic guard ───────────────────────────────────────────────────────
+    if not await _is_relevant(query, ant_key):
+        logger.info("Off-topic query rejected: %.80s", query)
+        return {"answer": _DECLINE_MESSAGE, "sources": [], "relevant": False}
 
     docs = retrieve(
         query=query,
