@@ -4,6 +4,7 @@ import Catalog from './views/Catalog'
 import Lineage from './views/Lineage'
 import Governance from './views/Governance'
 import Assets from './views/Assets'
+import Risk from './views/Risk'
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="lineage" element={<Lineage />} />
         <Route path="governance" element={<Governance />} />
         <Route path="assets" element={<Assets />} />
+        <Route path="risk" element={<Risk />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

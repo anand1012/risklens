@@ -6,6 +6,7 @@ const NAV = [
   { to: '/',            label: 'Catalog',    icon: '⬡' },
   { to: '/governance',  label: 'Governance', icon: '◈' },
   { to: '/assets',      label: 'Assets',     icon: '◻' },
+  { to: '/risk',        label: 'FRTB Risk',  icon: '◉' },
 ]
 
 export default function Layout() {
