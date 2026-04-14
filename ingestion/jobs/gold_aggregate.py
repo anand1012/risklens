@@ -693,7 +693,7 @@ def build_rfet_results(spark: SparkSession, project: str,
             ).otherwise(F.lit(None).cast(StringType())),
         )
         .select(
-            F.lit(trade_date).alias("rfet_date"),
+            F.to_date(F.lit(trade_date)).alias("rfet_date"),
             F.col("series_id").alias("risk_factor_id"),
             F.col("risk_class"),
             F.col("obs_12m_count"),
