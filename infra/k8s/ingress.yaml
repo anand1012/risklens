@@ -8,9 +8,38 @@ metadata:
     kubernetes.io/ingress.global-static-ip-name: risklens-ip
     networking.gke.io/managed-certificates: risklens-cert
 spec:
+  defaultBackend:
+    service:
+      name: risklens-frontend
+      port:
+        number: 80
   rules:
     - host: risklens.preciseguess.com
       http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: risklens-api
+                port:
+                  number: 8000
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: risklens-api
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: risklens-frontend
+                port:
+                  number: 80
+    # No-host rule: catches raw IP access (34.102.203.211)
+    - http:
         paths:
           - path: /api
             pathType: Prefix
