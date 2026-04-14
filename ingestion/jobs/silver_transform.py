@@ -48,6 +48,7 @@ def read_bronze(spark: SparkSession, project: str, table: str,
     return (
         spark.read
         .format("bigquery")
+        .option("parentProject", project)
         .option("query", query)
         .load()
     )

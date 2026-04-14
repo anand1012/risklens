@@ -45,7 +45,7 @@ def read_silver(spark: SparkSession, project: str, table: str,
     query = f"SELECT * FROM `{project}.risklens_silver.{table}`"
     if trade_date:
         query += f" WHERE trade_date = '{trade_date}'"
-    return spark.read.format("bigquery").option("query", query).load()
+    return spark.read.format("bigquery").option("parentProject", project).option("query", query).load()
 
 
 def write_silver_enriched(df: DataFrame, project: str, bucket: str,
