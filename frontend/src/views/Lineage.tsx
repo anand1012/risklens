@@ -134,9 +134,10 @@ function applyDagreLayout(
 export default function Lineage() {
   const { assetId } = useParams<{ assetId: string }>()
   const navigate = useNavigate()
+  const DEFAULT_NODE = 'gold_capital_charge'
   const [hops, setHops] = useState(2)
-  const [searchId, setSearchId] = useState(assetId ?? '')
-  const [activeId, setActiveId] = useState(assetId ?? '')
+  const [searchId, setSearchId] = useState(assetId ?? DEFAULT_NODE)
+  const [activeId, setActiveId] = useState(assetId ?? DEFAULT_NODE)
 
   const { data: graph, isLoading, isError } = useQuery({
     queryKey: ['lineage', activeId, hops],
@@ -219,7 +220,7 @@ export default function Lineage() {
         )}
         {!activeId && (
           <div className="absolute inset-0 flex items-center justify-center text-slate-500 z-10">
-            Enter an asset ID above to explore lineage.
+            Enter an asset ID or click <span className="mx-1 font-mono text-brand-400">View Lineage</span> from the Catalog.
           </div>
         )}
 

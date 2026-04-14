@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { streamChat } from '../api'
 import type { ChatMessage, ChatSource } from '../types'
 
@@ -70,7 +71,7 @@ export default function ChatPanel({ open, onClose }: Props) {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
-              ? { ...m, content: `Error: ${err.message}`, streaming: false }
+              ? { ...m, content: `**Error:** ${err.message}`, streaming: false }
               : m
           )
         )
@@ -138,8 +139,7 @@ export default function ChatPanel({ open, onClose }: Props) {
                 </div>
               ) : (
                 <div className="max-w-full space-y-2">
-                  <div className="bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 text-sm
-                                  text-slate-200 whitespace-pre-wrap leading-relaxed">
+                  <div className="bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-slate-200">
                     {msg.streaming && msg.content === '' ? (
                       <span className="flex items-center gap-1 h-5">
                         <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ backgroundColor: '#818cf8', animationDelay: '0ms' }} />
@@ -147,12 +147,44 @@ export default function ChatPanel({ open, onClose }: Props) {
                         <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ backgroundColor: '#818cf8', animationDelay: '300ms' }} />
                       </span>
                     ) : (
-                      <>
-                        {msg.content}
+                      <div className="prose-chat">
+                        <ReactMarkdown
+                          components={{
+                            p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+                            strong: ({ children }) => <strong className="text-slate-100 font-semibold">{children}</strong>,
+                            em: ({ children }) => <em className="text-slate-300">{children}</em>,
+                            ul: ({ children }) => <ul className="list-disc list-inside space-y-1 mb-2 text-slate-300">{children}</ul>,
+                            ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 mb-2 text-slate-300">{children}</ol>,
+                            li: ({ children }) => <li className="text-slate-300">{children}</li>,
+                            h1: ({ children }) => <h1 className="text-base font-bold text-slate-100 mb-2 mt-3">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-sm font-bold text-slate-100 mb-1.5 mt-3">{children}</h2>,
+                            h3: ({ children }) => <h3 className="text-sm font-semibold text-slate-200 mb-1 mt-2">{children}</h3>,
+                            code: ({ children, className }) => {
+                              const isBlock = className?.includes('language-')
+                              return isBlock
+                                ? <code className="block bg-slate-900 rounded-lg px-3 py-2 text-xs font-mono text-brand-300 mb-2 overflow-x-auto">{children}</code>
+                                : <code className="bg-slate-900 rounded px-1.5 py-0.5 text-xs font-mono text-brand-300">{children}</code>
+                            },
+                            pre: ({ children }) => <pre className="mb-2">{children}</pre>,
+                            table: ({ children }) => (
+                              <div className="overflow-x-auto mb-2">
+                                <table className="w-full text-xs border-collapse">{children}</table>
+                              </div>
+                            ),
+                            thead: ({ children }) => <thead className="border-b border-slate-700">{children}</thead>,
+                            th: ({ children }) => <th className="px-2 py-1.5 text-left text-slate-400 font-medium">{children}</th>,
+                            td: ({ children }) => <td className="px-2 py-1.5 border-b border-slate-800/60 text-slate-300">{children}</td>,
+                            blockquote: ({ children }) => <blockquote className="border-l-2 border-brand-600/60 pl-3 italic text-slate-400 mb-2">{children}</blockquote>,
+                            a: ({ href, children }) => <a href={href} className="text-brand-400 underline underline-offset-2 hover:text-brand-300" target="_blank" rel="noreferrer">{children}</a>,
+                            hr: () => <hr className="border-slate-700 my-3" />,
+                          }}
+                        >
+                          {msg.content}
+                        </ReactMarkdown>
                         {msg.streaming && (
-                          <span className="inline-block w-1.5 h-4 bg-brand-500 ml-1 animate-pulse align-middle" />
+                          <span className="inline-block w-1.5 h-4 bg-brand-500 ml-0.5 animate-pulse align-middle" />
                         )}
-                      </>
+                      </div>
                     )}
                   </div>
                   {msg.sources && msg.sources.length > 0 && !msg.streaming && (
