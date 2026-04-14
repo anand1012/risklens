@@ -171,6 +171,14 @@ jobs:
           kubectl rollout status deployment/risklens-frontend \
             --namespace=${{ env.NAMESPACE }} --timeout=180s
 
+      - name: Purge Cloudflare cache
+        run: |
+          curl -s -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}' | jq '.success'
+
       - name: Deployment summary
         run: |
           echo "=== Deployment complete ==="
