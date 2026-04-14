@@ -124,7 +124,7 @@ def build_trade_positions(spark: SparkSession, project: str,
 
     Produces: desk-level trade positions with current market value
     """
-    log.info("Building gold.trade_positions")
+    log.info("Building gold.trade_positions_r")
 
     trades = read_silver(spark, project, "trades", trade_date)
     prices = read_silver(spark, project, "prices", trade_date)
@@ -180,7 +180,7 @@ def build_var_outputs(spark: SparkSession, project: str,
     VaR outputs per desk from silver risk_outputs.
     Adds firm-level aggregate row.
     """
-    log.info("Building gold.var_outputs")
+    log.info("Building gold.var_outputs_s")
 
     risk = read_silver(spark, project, "risk_outputs", trade_date)
     if risk.rdd.isEmpty():
@@ -222,7 +222,7 @@ def build_es_outputs(spark: SparkSession, project: str,
     Expected Shortfall outputs per desk.
     Adds firm-level aggregate row.
     """
-    log.info("Building gold.es_outputs")
+    log.info("Building gold.es_outputs_s")
 
     risk = read_silver(spark, project, "risk_outputs", trade_date)
     if risk.rdd.isEmpty():
@@ -258,7 +258,7 @@ def build_pnl_vectors(spark: SparkSession, project: str,
     P&L attribution vectors per desk (100 scenarios each).
     Used for P&L Attribution Test (PLAT) under FRTB-IMA.
     """
-    log.info("Building gold.pnl_vectors")
+    log.info("Building gold.pnl_vectors_s")
 
     risk = read_silver(spark, project, "risk_outputs", trade_date)
     if risk.rdd.isEmpty():
@@ -287,7 +287,7 @@ def build_risk_summary(spark: SparkSession, project: str,
     Joins VaR + ES + P&L into one report-ready table per desk.
     This is the regulatory submission-ready view.
     """
-    log.info("Building gold.risk_summary")
+    log.info("Building gold.risk_summary_s")
 
     # Read from gold (just written)
     def read_gold(table: str) -> DataFrame:

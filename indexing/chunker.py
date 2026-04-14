@@ -4,9 +4,9 @@ Pulls catalog/lineage metadata from BigQuery and produces ChunkDoc objects
 ready for embedding and BM25 indexing.
 
 Sources:
-  - risklens_catalog.assets       → one chunk per asset  (source_type=asset_desc)
-  - risklens_catalog.schema_registry → one chunk per table schema (source_type=schema_doc)
-  - risklens_lineage.nodes + edges   → pipeline lineage narrative (source_type=pipeline_doc)
+  - risklens_catalog.assets_s       → one chunk per asset  (source_type=asset_desc)
+  - risklens_catalog.schema_registry_s → one chunk per table schema (source_type=schema_doc)
+  - risklens_lineage.nodes_s + edges   → pipeline lineage narrative (source_type=pipeline_doc)
 
 Usage:
     from indexing.chunker import build_chunks
@@ -53,8 +53,8 @@ def _chunk_catalog_assets(client: bigquery.Client, project: str) -> list[ChunkDo
             a.tags,
             o.owner_name,
             o.team
-        FROM `{project}.risklens_catalog.assets` a
-        LEFT JOIN `{project}.risklens_catalog.ownership` o USING (asset_id)
+        FROM `{project}.risklens_catalog.assets_s` a
+        LEFT JOIN `{project}.risklens_catalog.ownership_s` o USING (asset_id)
     """
     rows = list(client.query(query).result())
     chunks: list[ChunkDoc] = []
@@ -101,8 +101,8 @@ def _chunk_schema_registry(client: bigquery.Client, project: str) -> list[ChunkD
                 STRUCT(sr.column_name, sr.data_type, sr.nullable, sr.description, sr.sample_value)
                 ORDER BY sr.column_name
             ) AS columns
-        FROM `{project}.risklens_catalog.schema_registry` sr
-        LEFT JOIN `{project}.risklens_catalog.assets` a USING (asset_id)
+        FROM `{project}.risklens_catalog.schema_registry_s` sr
+        LEFT JOIN `{project}.risklens_catalog.assets_s` a USING (asset_id)
         GROUP BY sr.asset_id, a.name, a.domain, a.layer
     """
     rows = list(client.query(query).result())
@@ -143,11 +143,11 @@ def _chunk_lineage(client: bigquery.Client, project: str) -> list[ChunkDoc]:
     """One chunk per lineage node augmented with its upstream/downstream edges."""
     nodes_query = f"""
         SELECT node_id, name, type, domain, layer, metadata
-        FROM `{project}.risklens_lineage.nodes`
+        FROM `{project}.risklens_lineage.nodes_s`
     """
     edges_query = f"""
         SELECT from_node_id, to_node_id, relationship, pipeline_job
-        FROM `{project}.risklens_lineage.edges`
+        FROM `{project}.risklens_lineage.edges_s`
     """
 
     nodes = {row.node_id: row for row in client.query(nodes_query).result()}

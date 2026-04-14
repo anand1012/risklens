@@ -147,7 +147,7 @@ def transform_trades(spark: SparkSession, project: str, bucket: str, trade_date:
     bad_df  = df.filter(null_filter)
     good_df = df.filter(f"NOT ({null_filter})")
 
-    write_quarantine(bad_df, project, bucket, "bronze.trades",
+    write_quarantine(bad_df, project, bucket, "bronze.trades_r",
                      "NULL in critical field", trade_date)
 
     # ── Deduplication by dissemination_id + trade_date ────────────────────────
@@ -199,7 +199,7 @@ def transform_rates(spark: SparkSession, project: str, bucket: str, trade_date: 
     good_df = df.filter(F.col("value").isNotNull())
     nulls_count = bad_df.count()
 
-    write_quarantine(bad_df, project, bucket, "bronze.rates",
+    write_quarantine(bad_df, project, bucket, "bronze.rates_r",
                      "NULL value — missing observation", trade_date)
 
     # ── Deduplication by series_id + date ─────────────────────────────────────
@@ -253,7 +253,7 @@ def transform_prices(spark: SparkSession, project: str, bucket: str, trade_date:
     good_df      = df.filter(f"NOT ({null_filter})")
     nulls_count  = bad_df.count()
 
-    write_quarantine(bad_df, project, bucket, "bronze.prices",
+    write_quarantine(bad_df, project, bucket, "bronze.prices_r",
                      "NULL in OHLCV", trade_date)
 
     # ── OHLCV sanity: high >= low, close between low and high ─────────────────
@@ -268,7 +268,7 @@ def transform_prices(spark: SparkSession, project: str, bucket: str, trade_date:
         (F.col("close") <= F.col("high"))
     )
 
-    write_quarantine(invalid_df, project, bucket, "bronze.prices",
+    write_quarantine(invalid_df, project, bucket, "bronze.prices_r",
                      "OHLCV sanity check failed", trade_date)
 
     # ── Deduplication by ticker + date ────────────────────────────────────────
@@ -316,14 +316,14 @@ def transform_risk(spark: SparkSession, project: str, bucket: str, trade_date: s
     good_df = df.filter(f"NOT ({null_filter})")
     nulls_count = bad_df.count()
 
-    write_quarantine(bad_df, project, bucket, "bronze.risk_outputs",
+    write_quarantine(bad_df, project, bucket, "bronze.risk_outputs_s",
                      "NULL in desk or calc_date", trade_date)
 
     # ── VaR/ES bounds: must be positive ───────────────────────────────────────
     if "var_99_1d" in good_df.columns:
         invalid_df = good_df.filter(F.col("var_99_1d") <= 0)
         good_df    = good_df.filter(F.col("var_99_1d") > 0)
-        write_quarantine(invalid_df, project, bucket, "bronze.risk_outputs",
+        write_quarantine(invalid_df, project, bucket, "bronze.risk_outputs_s",
                          "VaR must be positive", trade_date)
 
     # ── Deduplication by desk + calc_date ─────────────────────────────────────

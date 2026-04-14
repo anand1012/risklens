@@ -162,7 +162,7 @@ def log_pipeline_run(**context):
         "timestamp":  datetime.utcnow().isoformat(),
     }]
     client.insert_rows_json(
-        f"{PROJECT_ID}.risklens_catalog.access_log", rows
+        f"{PROJECT_ID}.risklens_catalog.access_log_r", rows
     )
 
 
