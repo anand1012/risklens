@@ -13,6 +13,7 @@
 | I-9 | AI Chat — hallucinated `processed_at` partition column       | Resolved |
 | I-10| Lineage graph 404 for catalog/lineage meta-tables            | Resolved |
 | I-11| Duplicate rows in `risklens_catalog.assets` for 2 asset_ids  | Resolved |
+| I-12| `silver_positions` missing from lineage graph (audit finding) | Resolved |
 
 ---
 
@@ -45,3 +46,31 @@ Distinct `name` / `domain` values → these are two separate INSERTs, not a join
 **Root cause (likely):** PR #32's catalog seeding INSERTed new rows for existing `asset_id`s instead of MERGE-upsert. `risklens_catalog.assets` has no primary key / uniqueness constraint in BigQuery (BQ doesn't enforce them), so the duplicate survived.
 
 **Fix:** One-shot de-dupe via `CREATE OR REPLACE TABLE ... AS SELECT ... QUALIFY ROW_NUMBER() OVER (PARTITION BY asset_id ORDER BY ...) = 1`, then patch the offending catalog-seeding SQL to use `MERGE` keyed on `asset_id`. Which duplicate to keep: prefer the newer PR #32 rows (richer names) — confirm before dropping.
+
+---
+
+## I-12 — `silver_positions` missing from lineage graph
+
+**Symptom:** Found via a full catalog-vs-lineage audit (`curl /api/assets` × `curl /api/lineage/nodes`). Of 29 catalog assets: 20 pipeline assets have correct lineage nodes, 8 catalog/lineage meta-tables correctly return the I-10 META empty-state, and **1 outlier — `silver_positions` — returns 404** from `/api/lineage/graph/silver_positions?hops=2`.
+
+**Root cause:** Two bugs, one in the lineage graph and one in the synthetic generator:
+1. `ingestion/synthetic/generate.py:ASSETS` does not list `silver_positions`.
+2. `ingestion/synthetic/generate.py:LINEAGE_EDGES` draws three **incorrect** direct edges `silver_trades / silver_prices / silver_rates → gold_trade_positions` (relationship `aggregates`, job `gold_aggregate_job`).
+
+The actual code path, per `ingestion/jobs/silver_enrich.py:enrich_positions()` and `ingestion/jobs/gold_aggregate.py:build_trade_positions()`:
+- `silver_trades × silver_prices × silver_rates → silver.positions` (silver_enrich_job)
+- `silver.positions → gold.trade_positions` (gold_aggregate_job, **no join**, just a layer promotion per the comment: *"silver_enrich.py already joined trades × prices × rates into silver.positions, so this job just promotes the enriched silver table to gold"*)
+
+So the synthetic lineage graph collapses a 2-hop path into 3 direct edges, hiding `silver_positions` entirely.
+
+**Fix plan:**
+1. Live BQ INSERT:
+   - Add `silver_positions` row to `risklens_lineage.nodes` (type=table, layer=silver, domain=risk).
+   - DELETE the 3 obsolete edges (`silver_trades/prices/rates → gold_trade_positions`).
+   - INSERT 4 new edges: `silver_trades/prices/rates → silver_positions` (enriches, silver_enrich_job) + `silver_positions → gold_trade_positions` (feeds, gold_aggregate_job).
+2. Patch `ingestion/synthetic/generate.py`:
+   - Add `silver_positions` to ASSETS + ASSET_DESCRIPTIONS.
+   - Replace the 3 obsolete LINEAGE_EDGES with the 4 new ones.
+3. Optional (not required for the fix): add an edge story in `api/routers/lineage.py:EDGE_STORIES` for `silver_positions → gold_trade_positions` so users get a business-language click-through.
+
+**Impact check:** `silver.positions` is currently 0 rows (known, see I-3) because upstream DTCC SDR returns 404. Lineage DAG accuracy is independent of row counts — fix is safe.

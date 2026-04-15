@@ -71,6 +71,7 @@ ASSETS = [
     {"asset_id": "silver_prices",         "name": "Prices (Cleaned)",              "domain": "market_data",  "layer": "silver"},
     {"asset_id": "silver_risk_outputs",   "name": "Risk Outputs (Cleaned)",        "domain": "risk",         "layer": "silver"},
     {"asset_id": "silver_risk_enriched",  "name": "Risk Outputs with Market Context", "domain": "risk",      "layer": "silver"},
+    {"asset_id": "silver_positions",      "name": "Silver Positions (trades × prices × rates)", "domain": "risk", "layer": "silver"},
     # Gold
     {"asset_id": "gold_trade_positions",  "name": "Enriched Trade Positions",            "domain": "risk",       "layer": "gold"},
     {"asset_id": "gold_backtesting",      "name": "VaR Back-Testing + Traffic Light",    "domain": "risk",       "layer": "gold"},
@@ -96,7 +97,8 @@ ASSET_DESCRIPTIONS = {
     "silver_prices":         "Cleaned Yahoo Finance prices. OHLCV validated, split-adjusted, schema normalized. Instruments mapped to internal instrument IDs.",
     "silver_risk_outputs":   "Cleaned risk outputs. VaR and ES values validated against historical bounds. P&L vector dimension checks passed.",
     "silver_risk_enriched":  "Risk outputs enriched with market context (SOFR, VIX, HY spread) from silver_rates. Produced by silver_enrich.py. Used as primary input to gold ES and back-testing calculations.",
-    "gold_trade_positions":  "Enriched trade positions joining silver_trades with silver_prices and silver_rates. Includes present value using SOFR discount curve. Input to ES and PLAT calculations.",
+    "silver_positions":      "Aggregated trade positions at asset_class × currency × trade_date level. Built by silver_enrich.py by joining silver_trades with silver_prices (mark price) and silver_rates (discount). Promoted to gold_trade_positions with no further joins.",
+    "gold_trade_positions":  "Layer-promoted trade positions from silver_positions (silver_enrich.py already joined trades × prices × rates). Input to gold.risk_summary and gold_trade_positions-driven drilldowns in the UI.",
     "gold_backtesting":      "VaR 99% 1-day back-testing results per desk (BCBS 457 ¶351-368). Compares modeled VaR against hypothetical and actual P&L over a rolling 250-day window. Assigns traffic light zone (GREEN/AMBER/RED) and capital multiplier. NOTE: VaR is for back-testing ONLY; ES 97.5% is the regulatory capital metric.",
     "gold_es_outputs":       "Expected Shortfall 97.5% per desk, risk class, and liquidity horizon (BCBS 457 ¶21-34). Each desk maps to its FRTB risk class (GIRR/FX/CSR_NS/EQ/COMM) with risk-class-specific liquidity horizon scaling (10-40 days). This is the primary regulatory capital metric under FRTB IMA.",
     "gold_pnl_vectors":      "Daily hypothetical P&L (risk-factor shocks only) and actual P&L (realized including unexplained) per desk. pnl_unexplained = actual - hypothetical. Input to the P&L Attribution Test (PLAT) under BCBS 457 ¶329-345.",
@@ -126,10 +128,12 @@ LINEAGE_EDGES = [
     # Silver enrich: risk_outputs × rates → risk_enriched
     ("silver_risk_outputs", "silver_risk_enriched",  "enriches",   "silver_enrich_job"),
     ("silver_rates",        "silver_risk_enriched",  "enriches",   "silver_enrich_job"),
-    # Gold: trade positions
-    ("silver_trades",       "gold_trade_positions",  "aggregates", "gold_aggregate_job"),
-    ("silver_prices",       "gold_trade_positions",  "aggregates", "gold_aggregate_job"),
-    ("silver_rates",        "gold_trade_positions",  "aggregates", "gold_aggregate_job"),
+    # Silver enrich: trades × prices × rates → silver_positions (silver_enrich.py:enrich_positions)
+    ("silver_trades",       "silver_positions",      "enriches",   "silver_enrich_job"),
+    ("silver_prices",       "silver_positions",      "enriches",   "silver_enrich_job"),
+    ("silver_rates",        "silver_positions",      "enriches",   "silver_enrich_job"),
+    # Gold: promote silver_positions → gold_trade_positions (gold_aggregate.py:build_trade_positions — no join)
+    ("silver_positions",    "gold_trade_positions",  "feeds",      "gold_aggregate_job"),
     # Gold: back-testing (VaR 99%, traffic light) — uses enriched risk data
     ("silver_risk_enriched","gold_backtesting",      "aggregates", "gold_aggregate_job"),
     # Gold: ES outputs (risk class × liquidity horizon) — uses enriched risk data
