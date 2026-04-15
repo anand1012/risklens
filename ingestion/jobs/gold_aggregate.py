@@ -840,6 +840,18 @@ def main():
             update_sla_status(spark, args.project, args.bucket,
                               asset_id, args.date)
 
+    # Keep catalog-management tables themselves registered in the asset catalog
+    # so the RAG indexer picks up their schema. Without this, the AI chat never
+    # sees columns for sla_status / quality_scores and hallucinates field names.
+    # (I-6 / I-9 — see docs/issue_log.md.)
+    catalog_mgmt_assets = {
+        "sla_status":     "Per-asset SLA tracker written by this job",
+        "quality_scores": "Per-asset DQ scores written by silver_transform",
+    }
+    for catalog_asset, _note in catalog_mgmt_assets.items():
+        update_asset_catalog(spark, args.project, args.bucket,
+                             catalog_asset, 0, args.date)
+
     log.info("Gold aggregate complete.")
     for name, count in asset_counts.items():
         log.info(f"  {name:<30}: {count:,}")
