@@ -37,21 +37,27 @@ def main() -> None:
     args = parser.parse_args()
 
     # ── Step 1: chunk ────────────────────────────────────────────────────────
-    logger.info("=== Step 1/3: Chunking BigQuery metadata ===")
+    logger.info("=== Step 1/4: Chunking BigQuery metadata ===")
     from indexing.chunker import build_chunks
     chunks = build_chunks(project=args.project)
     if not chunks:
         logger.error("No chunks produced — is BigQuery populated? Run the ingestion pipeline first.")
         sys.exit(1)
-    logger.info("Chunks ready: %d", len(chunks))
+    logger.info("BQ metadata chunks: %d", len(chunks))
+
+    # ── Step 1b: UI docs ─────────────────────────────────────────────────────
+    from indexing.ui_docs import build_ui_docs
+    ui_chunks = build_ui_docs()
+    chunks.extend(ui_chunks)
+    logger.info("UI docs → %d chunks (total: %d)", len(ui_chunks), len(chunks))
 
     # ── Step 2: embed ────────────────────────────────────────────────────────
-    logger.info("=== Step 2/3: Generating Vertex AI embeddings → BigQuery ===")
+    logger.info("=== Step 2/4: Generating Vertex AI embeddings → BigQuery ===")
     from indexing.embedder import embed_and_store
     embed_and_store(chunks, project=args.project, truncate=args.truncate)
 
     # ── Step 3: bm25 ────────────────────────────────────────────────────────
-    logger.info("=== Step 3/3: Building BM25 index → GCS ===")
+    logger.info("=== Step 3/4: Building BM25 index → GCS ===")
     from indexing.bm25_index import build_and_save
     build_and_save(chunks, bucket=args.bucket)
 
