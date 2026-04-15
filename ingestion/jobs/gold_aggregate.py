@@ -122,22 +122,40 @@ def write_gold(df: DataFrame, project: str, bucket: str,
 
 def update_asset_catalog(spark: SparkSession, project: str, bucket: str,
                          asset_id: str, row_count: int, trade_date: str):
-    row = spark.createDataFrame([{
-        "asset_id":   asset_id,
-        "row_count":  row_count,
-        "updated_at": datetime.utcnow(),
-    }])
-    (
-        row.write
-        .format("bigquery")
-        .option("project",     project)
-        .option("dataset",     "risklens_catalog")
-        .option("table",       "assets")
-        .option("writeMethod", "indirect")
-        .option("temporaryGcsBucket", bucket)
-        .mode("append")
-        .save()
-    )
+    """
+    Upsert row_count / updated_at for an existing asset row.
+
+    Uses a BigQuery MERGE (WHEN MATCHED only) via the Python client rather than
+    a Spark DataFrame append, because `.mode("append")` creates a new row on
+    every pipeline run — which is how `gold_rfet_results` and
+    `silver_risk_enriched` ended up with duplicate rows in I-11. Assets must
+    already be registered by scripts/fix_catalog_assets.py (or equivalent
+    one-shot seeder); if not, this call is a no-op by design.
+    """
+    from google.cloud import bigquery
+    client = bigquery.Client(project=project)
+    sql = f"""
+        MERGE `{project}.risklens_catalog.assets` T
+        USING (
+            SELECT
+                @asset_id  AS asset_id,
+                @row_count AS row_count,
+                CURRENT_TIMESTAMP() AS updated_at
+        ) S
+        ON T.asset_id = S.asset_id
+        WHEN MATCHED THEN UPDATE SET
+            T.row_count  = S.row_count,
+            T.updated_at = S.updated_at
+    """
+    client.query(
+        sql,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("asset_id",  "STRING", asset_id),
+                bigquery.ScalarQueryParameter("row_count", "INT64",  int(row_count)),
+            ]
+        ),
+    ).result()
 
 
 def update_sla_status(spark: SparkSession, project: str, bucket: str,

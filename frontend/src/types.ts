@@ -66,6 +66,12 @@ export interface LineageGraph {
   hops: number
   nodes: LineageNode[]
   edges: LineageEdge[]
+  // Set when asset_id refers to a governance/meta table (catalog or lineage
+  // layer) that has no pipeline lineage. The UI should render a friendly
+  // empty-state instead of the red "Node not found" error.
+  meta_asset?: boolean
+  meta_asset_name?: string
+  meta_asset_layer?: string
 }
 
 export interface SlaRecord {
