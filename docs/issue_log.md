@@ -86,7 +86,7 @@ AI Chat response to *"when was gold layer loaded last?"*:
 Recommend fix #1 + #2 together for robustness.
 
 ### I-5 — Non-bronze `_s` / `_r` orphan tables
-**Status:** silver ✅ cleaned; catalog / lineage / embeddings **PAUSED pending I-6 / I-9 fix**
+**Status:** ✅ all 13 orphans archived + dropped 2026-04-15
 **Category:** cleanup | **Severity:** low
 
 Naming convention (per commits `4bdb048` + `70d1e5b`): `_r` = Real external, `_s` = Synthetic, **bronze layer only**. The refactor migrated catalog / lineage / embeddings / silver writes to non-suffixed targets but didn't drop the old tables.
@@ -103,16 +103,16 @@ Naming convention (per commits `4bdb048` + `70d1e5b`): `_r` = Real external, `_s
 | silver | `prices_r` | 1,103 | ✅ archived + dropped 2026-04-15 |
 | silver | `rates_r` | 588 | ✅ archived + dropped 2026-04-15 |
 | silver | `risk_outputs_s` | 325 | ✅ archived + dropped 2026-04-15 |
-| catalog | `assets_s` | 16 | pending |
-| catalog | `ownership_s` | 16 | pending |
-| catalog | `quality_scores_s` | 352 | pending |
-| catalog | `schema_registry_s` | 0 | pending |
-| catalog | `sla_status_s` | 352 | pending |
-| catalog | `access_log_r` | 132 | pending |
-| lineage | `edges_s` | 16 | pending |
-| lineage | `nodes_s` | 24 | pending |
-| embeddings | `chunks_s` | 40 | pending |
-| embeddings | `vectors_s` | 40 | pending |
+| catalog | `assets_s` | 16 | ✅ archived + dropped 2026-04-15 |
+| catalog | `ownership_s` | 16 | ✅ archived + dropped 2026-04-15 |
+| catalog | `quality_scores_s` | 352 | ✅ archived + dropped 2026-04-15 |
+| catalog | `schema_registry_s` | 0 | ✅ archived + dropped 2026-04-15 |
+| catalog | `sla_status_s` | 352 | ✅ archived + dropped 2026-04-15 |
+| catalog | `access_log_r` | 132 | ✅ archived + dropped 2026-04-15 |
+| lineage | `edges_s` | 16 | ✅ archived + dropped 2026-04-15 |
+| lineage | `nodes_s` | 24 | ✅ archived + dropped 2026-04-15 |
+| embeddings | `chunks_s` | 40 | ✅ archived + dropped 2026-04-15 |
+| embeddings | `vectors_s` | 40 | ✅ archived + dropped 2026-04-15 |
 
 All 13 have **zero writers in code** and were modified in the same 2026-04-14 05:47–05:49 batch window as the gold orphans cleaned in PR #28.
 
@@ -120,6 +120,22 @@ All 13 have **zero writers in code** and were modified in the same 2026-04-14 05
 - `risklens_silver._archive_prices_r_20260415` (1,103 rows)
 - `risklens_silver._archive_rates_r_20260415` (588 rows)
 - `risklens_silver._archive_risk_outputs_s_20260415` (325 rows)
+
+**Catalog rollback copies** (to be dropped once cleanup is fully verified):
+- `risklens_catalog._archive_assets_s_20260415` (16 rows)
+- `risklens_catalog._archive_ownership_s_20260415` (16 rows)
+- `risklens_catalog._archive_quality_scores_s_20260415` (352 rows)
+- `risklens_catalog._archive_schema_registry_s_20260415` (0 rows)
+- `risklens_catalog._archive_sla_status_s_20260415` (352 rows)
+- `risklens_catalog._archive_access_log_r_20260415` (132 rows)
+
+**Lineage rollback copies** (to be dropped once cleanup is fully verified):
+- `risklens_lineage._archive_edges_s_20260415` (16 rows)
+- `risklens_lineage._archive_nodes_s_20260415` (24 rows)
+
+**Embeddings rollback copies** (to be dropped once cleanup is fully verified):
+- `risklens_embeddings._archive_chunks_s_20260415` (40 rows)
+- `risklens_embeddings._archive_vectors_s_20260415` (40 rows)
 
 ## Resolved
 
