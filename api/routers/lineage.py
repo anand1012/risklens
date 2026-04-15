@@ -125,6 +125,13 @@ EDGE_STORIES: dict[tuple[str, str], dict] = {
         "frequency": "Daily — rolling 12-month window updated each day",
         "owner": "Model Validation team",
     },
+    ("bronze_fred_rates", "gold_rfet_results"): {
+        "title": "Raw Rates → RFET Observation Count (Bronze Direct Read)",
+        "what": "observation_count is computed by counting distinct rate_date values per series_id directly from the raw bronze table — not from silver. RFET checks whether each FRED rate series has ≥75 real market observations in the prior 12 months OR ≥25 in the prior 90 days to qualify as a modellable risk factor under FRTB IMA.",
+        "business_impact": "Reading from bronze is intentional and architecturally correct: silver forward-fills weekend and holiday gaps and removes outliers, which would inflate the count and make an ineligible factor appear eligible. A FRED rate series that fails RFET cannot be used in the IMA model and must be proxied. An ineligible GIRR factor forces SA capital charges on all trades sensitive to that factor — typically 20–40% more capital than IMA. RFET failures must be reported to the Risk Committee within 5 business days.",
+        "frequency": "Daily — rolling 12-month and 90-day observation windows recalculated from raw bronze",
+        "owner": "Regulatory Reporting team",
+    },
     ("silver_rates", "gold_rfet_results"): {
         "title": "Validated Rates → Risk Factor Eligibility Test (BCBS 457 ¶76-80)",
         "what": "Observation counts per FRED series checked against RFET thresholds: ≥75 in 12 months OR ≥25 in 90 days.",

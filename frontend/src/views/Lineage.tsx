@@ -31,6 +31,12 @@ const LAYER_BORDER: Record<string, string> = {
   gold:   '#d97706',
 }
 
+const LAYER_BG: Record<string, string> = {
+  bronze: '#1c1005',   // very dark amber tint
+  silver: '#0f1520',   // very dark slate-blue tint
+  gold:   '#1c1a05',   // very dark golden tint
+}
+
 const TYPE_ICON: Record<string, string> = {
   source: '◉', pipeline: '⬡', table: '◻', report: '◈', model: '⬠',
 }
@@ -98,8 +104,8 @@ function applyDagreLayout(
       position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
       data: { node: n },
       style: {
-        background: '#0f172a',
-        border: `1.5px solid ${LAYER_BORDER[n.layer] ?? '#334155'}`,
+        background: LAYER_BG[n.layer] ?? '#0f172a',
+        border: `2px solid ${LAYER_BORDER[n.layer] ?? '#334155'}`,
         borderRadius: 10,
         color: '#f1f5f9',
         width: NODE_W,
