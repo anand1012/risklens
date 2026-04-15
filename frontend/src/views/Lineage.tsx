@@ -5,7 +5,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   Handle,
   useNodesState,
   useEdgesState,
@@ -335,13 +334,6 @@ export default function Lineage() {
         >
           <Background color="#1e293b" gap={24} size={1} />
           <Controls className="[&>button]:bg-slate-800 [&>button]:border-slate-700 [&>button]:text-slate-300" />
-          <MiniMap
-            nodeColor={(n) => {
-              const b = (n.style?.border as string) ?? ''
-              return b.includes('#b45309') ? '#92400e' : b.includes('#d97706') ? '#78350f' : '#334155'
-            }}
-            className="bg-slate-900 border border-slate-800 rounded-xl"
-          />
         </ReactFlow>
 
         {graph && (
