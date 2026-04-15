@@ -195,14 +195,20 @@ function AssetDrawer({
             </DrawerSection>
           )}
 
-          <div className="px-5 pb-5">
-            <button
-              onClick={() => onLineage(assetId)}
-              className="btn-primary w-full justify-center"
-            >
-              View Lineage →
-            </button>
-          </div>
+          {/* Lineage only applies to pipeline assets — catalog/lineage meta
+              tables (sla_status, quality_scores, schema_registry, …) are
+              written by the system itself and have no upstream/downstream
+              lineage, so hide the button for them. See I-10. */}
+          {asset.layer !== 'catalog' && asset.layer !== 'lineage' && (
+            <div className="px-5 pb-5">
+              <button
+                onClick={() => onLineage(assetId)}
+                className="btn-primary w-full justify-center"
+              >
+                View Lineage →
+              </button>
+            </div>
+          )}
         </div>
       ) : null}
     </aside>

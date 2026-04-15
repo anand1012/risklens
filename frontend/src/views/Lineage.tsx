@@ -346,6 +346,24 @@ export default function Lineage() {
             Node not found or no lineage data.
           </div>
         )}
+        {/* Governance / meta-table empty state (I-10) — catalog and lineage
+            layer assets are written by the system itself, not by a pipeline
+            job, so they don't appear in risklens_lineage.nodes. Show a
+            neutral message instead of the red "not found" error. */}
+        {graph?.meta_asset && (
+          <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+            <div className="max-w-md text-center px-6 py-5 bg-slate-900/90 border border-slate-700 rounded-xl">
+              <div className="text-brand-400 text-sm font-semibold mb-2">
+                {graph.meta_asset_name ?? activeId}
+              </div>
+              <div className="text-slate-400 text-xs leading-relaxed">
+                This is a <span className="font-mono text-slate-300">{graph.meta_asset_layer}</span> governance table.
+                It's written by the RiskLens system itself, so it has no
+                upstream pipeline and no lineage to show.
+              </div>
+            </div>
+          </div>
+        )}
 
         <ReactFlow
           nodes={rfNodes}

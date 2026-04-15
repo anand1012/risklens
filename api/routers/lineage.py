@@ -248,6 +248,13 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
     """
     Return nodes + edges for the subgraph within `hops` of asset_id.
     The frontend uses this to render the lineage DAG.
+
+    For governance/meta tables (catalog and lineage layers — sla_status,
+    quality_scores, schema_registry, ownership, lineage_nodes, lineage_edges,
+    …) there is no pipeline lineage to show. These tables are written by the
+    system itself, not by a Bronze→Silver→Gold job. Rather than returning a
+    404 that the UI renders as a red error (I-10), we return an empty graph
+    with `meta_asset: true` so the frontend can show a neutral empty-state.
     """
     # Seed node IDs — start from the requested asset
     # We iteratively expand via edges up to `hops` levels
@@ -257,6 +264,24 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
     """
     seeds = [r["node_id"] for r in query_rows(seed_sql)]
     if not seeds:
+        # Is this a registered governance/meta asset? If so, return an empty
+        # graph instead of 404 so the UI can show a friendly message.
+        meta_sql = f"""
+            SELECT asset_id, name, layer
+            FROM `{project()}.risklens_catalog.assets`
+            WHERE asset_id = '{asset_id}' AND layer IN ('catalog', 'lineage')
+        """
+        meta_row = query_rows(meta_sql)
+        if meta_row:
+            return {
+                "root_id": asset_id,
+                "hops": hops,
+                "nodes": [],
+                "edges": [],
+                "meta_asset": True,
+                "meta_asset_name": meta_row[0]["name"],
+                "meta_asset_layer": meta_row[0]["layer"],
+            }
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Node '{asset_id}' not found")
 
