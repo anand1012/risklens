@@ -56,14 +56,14 @@ When a regulator asks *"show me the full lineage of your VaR number"* — it tak
                            │
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  AI LAYER — LangChain + LangSmith + Claude (Anthropic)         │
-│  Hybrid RAG (BM25 + Cohere embed-english-v3.0 vector search)  │
-│  40 chunks indexed: asset descriptions, schema, pipeline docs  │
+│  Hybrid RAG (BM25 + Vertex AI text-embedding-004)              │
+│  109 chunks indexed: asset, schema, pipeline, UI/workflow docs │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  APPLICATION — Docker + Kubernetes (GKE Standard)              │
 │  FastAPI (Python) │ React + Vite + Tailwind │ Nginx             │
-│  GKE single-zone, e2-standard-2, Recreate strategy            │
+│  GKE single-zone us-central1-a, e2-medium, Recreate strategy  │
 │  Cloudflare CDN + HTTPS │ GitHub Actions CI/CD                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -75,16 +75,16 @@ When a regulator asks *"show me the full lineage of your VaR number"* — it tak
 | Layer | Technology |
 |---|---|
 | Analytical Storage | BigQuery — Medallion architecture (Bronze/Silver/Gold) |
-| Vector Embeddings | Cohere `embed-english-v3.0` via LangChain |
+| Vector Embeddings | Vertex AI `text-embedding-004` |
 | RAG Orchestration | LangChain 0.3 (EnsembleRetriever: BM25 + semantic hybrid) |
 | Agentic Workflows | LangGraph — multi-step query routing |
 | LLM Observability | LangSmith |
-| LLM | Claude 3.5 Sonnet (Anthropic) |
+| LLM | Claude Sonnet 4.6 + Claude Haiku 4.5 (Anthropic) |
 | Backend API | FastAPI + Uvicorn |
 | Frontend | React 18, Vite, Tailwind CSS, TanStack Query |
 | Lineage Graph | ReactFlow (`@xyflow/react`) + Dagre auto-layout |
 | Containerization | Docker (multi-stage builds) |
-| Container Orchestration | GKE Standard, single-zone (`us-central1-a`), e2-standard-2 |
+| Container Orchestration | GKE Standard, single-zone (`us-central1-a`), e2-medium |
 | Secrets | GCP Secret Manager + Workload Identity |
 | CI/CD | GitHub Actions — build, push to Artifact Registry, rollout |
 | CDN / HTTPS | Cloudflare (auto-purge on deploy) |
@@ -94,7 +94,7 @@ When a regulator asks *"show me the full lineage of your VaR number"* — it tak
 ## Key UI Features
 
 ### Data Catalog
-- 16 FRTB assets with domain, layer, owner, freshness, SLA, and row count
+- 31 FRTB assets with domain, layer, owner, freshness, SLA, and row count
 - Click any row to open a detail drawer with schema, quality metrics, and ownership
 - Filter by domain (risk / market_data / reference / regulatory) and layer (bronze / silver / gold)
 
@@ -110,7 +110,7 @@ When a regulator asks *"show me the full lineage of your VaR number"* — it tak
 
 ### AI Chat
 - Streaming responses via SSE with 3-dot animation while waiting
-- Hybrid retrieval: BM25 keyword + Vertex AI vector search over 40 indexed chunks
+- Hybrid retrieval: BM25 keyword + Vertex AI vector search over 109 indexed chunks
 - Source cards show which assets each answer was drawn from
 - Suggestion buttons auto-send on click (no need to press Enter)
 
@@ -156,8 +156,9 @@ risklens/
 │       └── generate.py            ← Synthetic FRTB data generator
 ├── indexing/
 │   ├── chunker.py                 ← LangChain document chunking
-│   ├── embedder.py                ← Vertex AI embeddings → BigQuery
-│   └── bm25_index.py              ← BM25 keyword index builder
+│   ├── embedder.py                ← Vertex AI text-embedding-004 → BigQuery
+│   ├── bm25_index.py              ← BM25 keyword index builder
+│   └── run_indexing.py            ← Build RAG index (BM25 + embeddings)
 ├── api/
 │   ├── main.py                    ← FastAPI app + router registration
 │   ├── routers/
@@ -191,7 +192,8 @@ risklens/
 └── scripts/
     ├── setup_gcp.sh               ← One-time GCP infra setup
     ├── setup_bigquery.py          ← BigQuery schema creation
-    └── run_indexing.py            ← Build RAG index (BM25 + embeddings)
+    ├── refresh_data.sh            ← End-to-end pipeline refresh
+    └── dump_table_stats.py        ← Snapshot BQ table stats → docs/table_stats.json
 ```
 
 ---
@@ -202,7 +204,7 @@ risklens/
 |---|---|---|
 | BigQuery | ~500MB storage, ~50GB queries/month | **~$0** (free tier) |
 | GCS | ~1GB raw files | **~$0** (free tier) |
-| GKE | 1 node, e2-standard-2, single-zone | **~$50/month** |
+| GKE | 1 node, e2-medium, single-zone | **~$25/month** |
 | Vertex AI | Embedding calls during indexing only | **~$0.01/re-index** |
 | Secret Manager | 4 secrets | **~$0** (free tier) |
 | Cloudflare | Free tier (CDN + HTTPS) | **$0** |
