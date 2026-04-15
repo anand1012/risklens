@@ -89,7 +89,10 @@ function applyDagreLayout(
 ): { flowNodes: Node[]; flowEdges: Edge[]; storyMap: Map<string, EdgeStory> } {
   const g = new dagre.graphlib.Graph()
   g.setDefaultEdgeLabel(() => ({}))
-  g.setGraph({ rankdir: 'LR', nodesep: 60, ranksep: 120, marginx: 40, marginy: 40 })
+  // Wider ranksep + taller nodesep give dagre more room to route the 16
+  // "aggregates" edges that converge on gold nodes, which otherwise stack
+  // labels on top of each other.
+  g.setGraph({ rankdir: 'LR', nodesep: 90, ranksep: 180, marginx: 40, marginy: 40 })
 
   nodes.forEach((n) => g.setNode(n.node_id, { width: NODE_W, height: NODE_H }))
   rawEdges.forEach((e) => g.setEdge(e.from_node_id, e.to_node_id))
@@ -114,10 +117,20 @@ function applyDagreLayout(
     }
   })
 
+  // Relationship-specific colors so the 16 "aggregates" edges don't all
+  // read as one faded slate blob. Each relationship gets its own hue.
+  const REL_COLOR: Record<string, string> = {
+    aggregates: '#a78bfa', // violet
+    enriches:   '#34d399', // emerald
+    transforms: '#60a5fa', // blue
+    feeds:      '#fbbf24', // amber
+  }
+
   const storyMap = new Map<string, EdgeStory>()
   const flowEdges: Edge[] = rawEdges.map((e) => {
     if (e.story) storyMap.set(e.edge_id, e.story)
     const hasStory = !!e.story
+    const relColor = REL_COLOR[e.relationship] ?? '#818cf8'
     return {
       id: e.edge_id,
       source: e.from_node_id,
@@ -125,10 +138,26 @@ function applyDagreLayout(
       type: 'smoothstep',
       animated: true,
       label: e.relationship,
-      labelStyle: { fill: hasStory ? '#818cf8' : '#475569', fontSize: 10, fontFamily: 'monospace', cursor: 'pointer' },
-      labelBgStyle: { fill: '#0f172a', fillOpacity: 0.9 },
-      style: { stroke: hasStory ? '#6366f1' : '#334155', strokeWidth: hasStory ? 2 : 1.5 },
-      markerEnd: { type: MarkerType.ArrowClosed, color: hasStory ? '#6366f1' : '#334155', width: 14, height: 14 },
+      labelStyle: {
+        fill: relColor,
+        fontSize: 10,
+        fontFamily: 'monospace',
+        fontWeight: 600,
+        cursor: hasStory ? 'pointer' : 'default',
+      },
+      // Opaque bg + padding so overlapping labels remain individually legible
+      labelBgStyle: { fill: '#0f172a', fillOpacity: 1 },
+      labelBgPadding: [6, 3],
+      labelBgBorderRadius: 4,
+      labelShowBg: true,
+      style: {
+        stroke: relColor,
+        strokeWidth: hasStory ? 2 : 1.5,
+        strokeOpacity: hasStory ? 1 : 0.85,
+      },
+      markerEnd: { type: MarkerType.ArrowClosed, color: relColor, width: 14, height: 14 },
+      // Interactable flag — only edges with stories should look clickable.
+      interactionWidth: 20,
     }
   })
 
