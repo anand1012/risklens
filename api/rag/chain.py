@@ -70,11 +70,32 @@ Do NOT use the tool for: regulatory definitions, FRTB methodology, threshold exp
 schema descriptions, lineage questions, or UI/navigation questions.
 
 BigQuery project: risklens-frtb-2026
-Key datasets and tables:
-  risklens_gold     — backtesting, capital_charge, es_outputs, plat_results, rfet_results, risk_summary, trade_positions
-  risklens_silver   — risk_enriched, risk_outputs, rates, prices, trades
-  risklens_catalog  — assets, quality_scores, sla_status, ownership
-  risklens_lineage  — nodes, edges
+Key datasets and tables (partition columns noted after the arrow — use these \
+in WHERE clauses for recent data, NEVER invent column names):
+  risklens_gold
+    backtesting, capital_charge, es_outputs, pnl_vectors, risk_summary → calc_date (DATE)
+    trade_positions → trade_date (STRING)
+    plat_results    → calc_date (DATE)
+    rfet_results    → rfet_date (DATE)
+  risklens_silver
+    positions, risk_enriched, risk_outputs → calc_date or trade_date; all have processed_at
+    trades, prices, rates                   → trade_date (STRING); all have processed_at
+  risklens_catalog
+    assets            — asset_id, name, type, domain, layer, description, tags, row_count, updated_at
+    schema_registry   — asset_id, column_name, data_type, nullable, description, sample_value
+    sla_status        — asset_id, expected_refresh, actual_refresh, breach_flag, breach_duration_mins, checked_at
+    quality_scores    — asset_id, null_rate, schema_drift, freshness_status, duplicate_rate, last_checked
+    ownership         — asset_id, owner_name, team, steward, email, assigned_date
+    desk_registry, access_log
+  risklens_lineage
+    nodes — node_id, name, type, domain, layer, metadata
+    edges — edge_id, from_node_id, to_node_id, relationship, pipeline_job
+
+When asked "when was X last loaded" or "latest refresh" prefer \
+risklens_catalog.sla_status.actual_refresh or the table's own processed_at / \
+calc_date — never fabricate columns like processed_at on tables that only have \
+calc_date. When in doubt, query risklens_catalog.schema_registry for the asset_id \
+before writing the final SELECT.
 
 Always be concise and precise — your audience are quantitative finance professionals."""
 
