@@ -619,9 +619,15 @@ def gen_desk_registry() -> pd.DataFrame:
 
 
 def gen_lineage() -> tuple[pd.DataFrame, pd.DataFrame]:
+    # Build lookups so table-type nodes carry their real layer + domain from
+    # the ASSETS manifest; source/pipeline nodes fall back to sensible defaults.
+    asset_layers  = {a["asset_id"]: a["layer"]  for a in ASSETS}
+    asset_domains = {a["asset_id"]: a["domain"] for a in ASSETS}
     nodes = pd.DataFrame([
         {"node_id": n[0], "name": n[1], "type": n[2],
-         "domain": "frtb", "layer": "", "metadata": "{}",
+         "domain": asset_domains.get(n[0], "frtb"),
+         "layer":  asset_layers.get(n[0], ""),
+         "metadata": "{}",
          "created_at": datetime.utcnow().isoformat()}
         for n in LINEAGE_NODES
     ])
