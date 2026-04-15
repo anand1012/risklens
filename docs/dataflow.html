@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RiskLens — FRTB Data Platform Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f172a;
+    --bg2: #1e293b;
+    --bg3: #263045;
+    --border: #334155;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+
+    --bronze: #b45309;
+    --bronze-light: #d97706;
+    --bronze-bg: #1c1009;
+    --bronze-border: #78350f;
+
+    --silver: #475569;
+    --silver-light: #94a3b8;
+    --silver-bg: #0f1923;
+    --silver-border: #334155;
+
+    --gold: #d97706;
+    --gold-light: #fbbf24;
+    --gold-bg: #1c1400;
+    --gold-border: #92400e;
+
+    --rag: #7c3aed;
+    --rag-light: #a78bfa;
+    --rag-bg: #13092b;
+    --rag-border: #4c1d95;
+
+    --infra: #1d4ed8;
+    --infra-light: #60a5fa;
+    --infra-bg: #080f25;
+    --infra-border: #1e3a8a;
+
+    --ext: #059669;
+    --ext-light: #34d399;
+    --ext-bg: #041a12;
+    --ext-border: #064e3b;
+
+    --api: #0891b2;
+    --api-light: #22d3ee;
+    --api-bg: #041219;
+    --api-border: #164e63;
+
+    --ui: #db2777;
+    --ui-light: #f472b6;
+    --ui-bg: #1a0613;
+    --ui-border: #831843;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+    overflow-x: auto;
+  }
+
+  .page {
+    min-width: 1600px;
+    padding: 32px 40px 48px;
+  }
+
+  /* ── Header ── */
+  .header {
+    text-align: center;
+    margin-bottom: 36px;
+  }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #fbbf24 0%, #a78bfa 50%, #22d3ee 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 6px;
+  }
+  .header .subtitle {
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.5px;
+  }
+  .header .subtitle span {
+    color: var(--text-dim);
+    margin: 0 6px;
+  }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 32px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  /* ── Main layout ── */
+  .diagram {
+    display: grid;
+    grid-template-columns: 160px 180px 200px 220px 300px 220px 180px 200px 120px;
+    grid-template-rows: auto auto;
+    gap: 0 0;
+    position: relative;
+    align-items: start;
+  }
+
+  /* ── Column headers ── */
+  .col-header {
+    text-align: center;
+    padding: 8px 6px 16px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+
+  /* ── Swim lane wrappers ── */
+  .lane {
+    padding: 0 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+  }
+
+  /* ── Nodes ── */
+  .node {
+    border-radius: 8px;
+    border: 1px solid;
+    padding: 10px 12px;
+    position: relative;
+    transition: box-shadow 0.2s;
+  }
+  .node:hover {
+    box-shadow: 0 0 0 2px currentColor;
+  }
+  .node-title {
+    font-weight: 600;
+    font-size: 11.5px;
+    margin-bottom: 3px;
+  }
+  .node-sub {
+    font-size: 10px;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .node-tag {
+    display: inline-block;
+    font-size: 9px;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-top: 5px;
+    letter-spacing: 0.3px;
+  }
+
+  /* Color variants */
+  .ext   { background: var(--ext-bg);    border-color: var(--ext-border);    color: var(--ext-light); }
+  .bronze{ background: var(--bronze-bg); border-color: var(--bronze-border); color: var(--bronze-light); }
+  .silver{ background: var(--silver-bg); border-color: var(--silver-border); color: var(--silver-light); }
+  .gold  { background: var(--gold-bg);   border-color: var(--gold-border);   color: var(--gold-light); }
+  .rag   { background: var(--rag-bg);    border-color: var(--rag-border);    color: var(--rag-light); }
+  .infra { background: var(--infra-bg);  border-color: var(--infra-border);  color: var(--infra-light); }
+  .api   { background: var(--api-bg);    border-color: var(--api-border);    color: var(--api-light); }
+  .ui    { background: var(--ui-bg);     border-color: var(--ui-border);     color: var(--ui-light); }
+  .cat   { background: #0d1117;          border-color: #6366f1;              color: #818cf8; }
+
+  .node-tag.ext    { background: var(--ext-border);    color: var(--ext-light); }
+  .node-tag.bronze { background: var(--bronze-border); color: var(--bronze-light); }
+  .node-tag.silver { background: var(--silver-border); color: var(--silver-light); }
+  .node-tag.gold   { background: var(--gold-border);   color: var(--gold-light); }
+  .node-tag.rag    { background: var(--rag-border);    color: var(--rag-light); }
+  .node-tag.infra  { background: var(--infra-border);  color: var(--infra-light); }
+  .node-tag.api    { background: var(--api-border);    color: var(--api-light); }
+  .node-tag.ui     { background: var(--ui-border);     color: var(--ui-light); }
+
+  /* ── Section dividers inside BQ column ── */
+  .bq-section {
+    margin-bottom: 4px;
+  }
+  .bq-label {
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 3px 8px 2px;
+    border-radius: 4px 4px 0 0;
+    margin-bottom: -1px;
+  }
+
+  /* ── Arrow connectors (SVG overlay) ── */
+  .arrows-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+
+  /* ── Inline arrows between lanes ── */
+  .arrow-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    color: var(--text-dim);
+    padding-top: 40px;
+  }
+
+  /* ── The whole flow canvas ── */
+  .flow-canvas {
+    position: relative;
+  }
+
+  /* ── Table-like BQ section ── */
+  .bq-wrapper {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #0d1117;
+    margin-bottom: 0;
+  }
+  .bq-wrapper-header {
+    background: #161b27;
+    padding: 8px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .bq-icon {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+  }
+  .bq-table-row {
+    padding: 6px 10px;
+    border-bottom: 1px solid #1a2235;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .bq-table-row:last-child { border-bottom: none; }
+  .bq-table-row .tname { font-weight: 500; }
+  .bq-table-row .tdesc {
+    font-size: 9px;
+    color: var(--text-dim);
+    text-align: right;
+    max-width: 55%;
+    line-height: 1.3;
+  }
+
+  /* ── Arrows SVG ── */
+  svg.arrows {
+    display: block;
+    width: 100%;
+    overflow: visible;
+  }
+
+  /* ── Main grid layout ── */
+  .main-grid {
+    display: grid;
+    grid-template-columns:
+      170px   /* col 1: external sources */
+      24px    /* arrow */
+      185px   /* col 2: ingestion / GCS */
+      24px    /* arrow */
+      210px   /* col 3: BigQuery (medallion) */
+      24px    /* arrow */
+      210px   /* col 4: RAG pipeline */
+      24px    /* arrow */
+      185px   /* col 5: API + Frontend */
+      24px    /* arrow */
+      80px;   /* col 6: User */
+    gap: 0;
+    align-items: start;
+  }
+
+  .arrow-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding-top: 60px;
+    color: var(--text-dim);
+  }
+  .arrow-line {
+    width: 1px;
+    background: var(--border);
+    flex: 1;
+    min-height: 20px;
+  }
+  .arrow-head {
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  /* ── Section labels ── */
+  .section-label {
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding-bottom: 12px;
+    margin-bottom: 10px;
+    border-bottom: 2px solid;
+  }
+  .section-label.ext    { color: var(--ext-light);    border-color: var(--ext); }
+  .section-label.bronze { color: var(--bronze-light); border-color: var(--bronze); }
+  .section-label.bq     { color: var(--text-muted);   border-color: var(--border); }
+  .section-label.rag    { color: var(--rag-light);    border-color: var(--rag); }
+  .section-label.api    { color: var(--api-light);    border-color: var(--api); }
+
+  /* BQ column inner layout */
+  .bq-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* ── Infra strip at bottom ── */
+  .infra-strip {
+    margin-top: 28px;
+    border: 1px solid var(--infra-border);
+    border-radius: 10px;
+    background: var(--infra-bg);
+    padding: 14px 20px;
+  }
+  .infra-strip-header {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--infra-light);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .infra-strip-header::before,
+  .infra-strip-header::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--infra-border);
+  }
+  .infra-nodes {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .infra-node {
+    border: 1px solid var(--infra-border);
+    background: #0a1020;
+    border-radius: 7px;
+    padding: 8px 12px;
+    min-width: 130px;
+    flex: 1;
+  }
+  .infra-node-title {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--infra-light);
+    margin-bottom: 3px;
+  }
+  .infra-node-sub {
+    font-size: 9.5px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+
+  /* ── Connector arrows using CSS ── */
+  .conn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 2px;
+  }
+  .conn svg { overflow: visible; }
+
+  /* Small pulse badge */
+  .badge {
+    display: inline-block;
+    font-size: 8.5px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-weight: 600;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .badge.live  { background: #064e3b; color: #34d399; }
+  .badge.empty { background: #1c1009; color: #b45309; }
+  .badge.rag   { background: #4c1d95; color: #a78bfa; }
+
+  /* ── Flow section ── */
+  .flow-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    position: relative;
+  }
+
+  /* ── Column widths ── */
+  .c-ext    { width: 170px; flex-shrink: 0; }
+  .c-ingest { width: 182px; flex-shrink: 0; }
+  .c-bq     { width: 220px; flex-shrink: 0; }
+  .c-rag    { width: 200px; flex-shrink: 0; }
+  .c-api    { width: 175px; flex-shrink: 0; }
+  .c-user   { width: 70px; flex-shrink: 0; }
+  .c-arrow  { width: 28px; flex-shrink: 0; display: flex; align-items: flex-start; justify-content: center; padding-top: 38px; }
+
+  .big-arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    color: var(--border);
+  }
+  .big-arrow .shaft {
+    width: 2px;
+    min-height: 40px;
+    background: linear-gradient(to bottom, transparent, var(--border));
+    flex: 1;
+  }
+  .big-arrow .tip {
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1;
+  }
+
+  hr.divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 4px 0;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── Header ── -->
+  <div class="header">
+    <h1>RiskLens — FRTB Data Platform Architecture</h1>
+    <div class="subtitle">
+      GCP-native<span>·</span>Medallion Architecture<span>·</span>RAG-powered AI Chat<span>·</span>Portfolio Project targeting Atlan Field Engineer
+    </div>
+  </div>
+
+  <!-- ── Legend ── -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#059669"></div> External Sources</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#b45309"></div> Bronze (Raw Ingestion)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#475569"></div> Silver (Cleaned)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#d97706"></div> Gold (FRTB Business)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#6366f1"></div> Catalog / Lineage</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7c3aed"></div> RAG / AI Pipeline</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#0891b2"></div> FastAPI Backend</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#db2777"></div> React Frontend</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1d4ed8"></div> GCP Infrastructure</div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- Main flow diagram                                              -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="flow-row">
+
+    <!-- ── Col 1: External Sources ── -->
+    <div class="c-ext">
+      <div class="section-label ext">External Sources</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+
+        <div class="node ext">
+          <div class="node-title">FRED API</div>
+          <div class="node-sub">Federal Reserve<br>SOFR · DFF · 10Y Treasury<br>HY Spread · VIX</div>
+          <span class="node-tag ext">macro rates</span>
+        </div>
+
+        <div class="node ext">
+          <div class="node-title">Yahoo Finance API</div>
+          <div class="node-sub">Daily OHLCV prices<br>trading instruments</div>
+          <span class="node-tag ext">market data</span>
+        </div>
+
+        <div class="node ext" style="opacity:0.6;">
+          <div class="node-title">DTCC SDR <span class="badge empty">404</span></div>
+          <div class="node-sub">OTC derivatives trades<br><em>architecturally wired,<br>currently unavailable</em></div>
+          <span class="node-tag ext">otc trades</span>
+        </div>
+
+        <div class="node ext">
+          <div class="node-title">Synthetic Generator</div>
+          <div class="node-sub"><code style="font-size:9px;color:#34d399">ingestion/synthetic/<br>generate.py</code><br>VaR · ES · P&amp;L risk outputs<br>for FRTB testing</div>
+          <span class="node-tag ext">synthetic risk</span>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- arrow 1 -->
+    <div class="c-arrow">
+      <svg width="28" height="300" style="overflow:visible">
+        <defs>
+          <marker id="ah1" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill="#334155"/>
+          </marker>
+        </defs>
+        <line x1="14" y1="0" x2="14" y2="290" stroke="#334155" stroke-width="1.5" marker-end="url(#ah1)"/>
+        <text x="7" y="150" font-size="8" fill="#475569" transform="rotate(-90,7,150)" text-anchor="middle" font-family="Inter,sans-serif">HTTP / API</text>
+      </svg>
+    </div>
+
+    <!-- ── Col 2: Ingestion ── -->
+    <div class="c-ingest">
+      <div class="section-label bronze">Ingestion — Dataproc</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+
+        <div class="node" style="background:#0f0f1a;border-color:#3730a3;color:#818cf8;margin-bottom:4px;">
+          <div class="node-title">Apache Spark</div>
+          <div class="node-sub">Google Dataproc<br>4 Bronze jobs</div>
+        </div>
+
+        <div class="node bronze">
+          <div class="node-title">bronze_rates_job</div>
+          <div class="node-sub">→ rates_r</div>
+        </div>
+        <div class="node bronze">
+          <div class="node-title">bronze_prices_job</div>
+          <div class="node-sub">→ prices_r</div>
+        </div>
+        <div class="node bronze" style="opacity:0.55;">
+          <div class="node-title">bronze_trades_job</div>
+          <div class="node-sub">→ trades_r <em>(empty)</em></div>
+        </div>
+        <div class="node bronze">
+          <div class="node-title">bronze_synthetic_job</div>
+          <div class="node-sub">→ risk_outputs_s</div>
+        </div>
+
+        <div style="margin-top:6px;border:1px dashed #334155;border-radius:7px;padding:8px 10px;background:#0a1020;">
+          <div style="font-size:9.5px;font-weight:700;color:#60a5fa;margin-bottom:5px;letter-spacing:0.5px;">GCS Bucket</div>
+          <div style="font-size:9px;color:#475569;font-family:'JetBrains Mono',monospace;">risklens-frtb-2026<br>  /raw/rates/*.parquet<br>  /raw/prices/*.parquet<br>  /raw/risk/*.parquet</div>
+        </div>
+
+        <div style="margin-top:4px;border:1px solid #1e3a8a;border-radius:7px;padding:8px 10px;background:#08101e;">
+          <div style="font-size:9.5px;font-weight:700;color:#60a5fa;margin-bottom:4px;">Cloud Scheduler</div>
+          <div style="font-size:9px;color:#475569;line-height:1.4;">Daily refresh trigger<br><code style="font-size:8.5px;color:#60a5fa">scripts/refresh_data.sh</code><br><span style="color:#334155;font-size:8.5px;">Cloud Composer retired</span></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- arrow 2 -->
+    <div class="c-arrow">
+      <svg width="28" height="560" style="overflow:visible">
+        <defs>
+          <marker id="ah2" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill="#334155"/>
+          </marker>
+        </defs>
+        <line x1="14" y1="0" x2="14" y2="550" stroke="#334155" stroke-width="1.5" marker-end="url(#ah2)"/>
+        <text x="7" y="280" font-size="8" fill="#475569" transform="rotate(-90,7,280)" text-anchor="middle" font-family="Inter,sans-serif">Spark write</text>
+      </svg>
+    </div>
+
+    <!-- ── Col 3: BigQuery (Medallion) ── -->
+    <div class="c-bq">
+      <div class="section-label bq" style="color:#94a3b8;border-color:#334155;">BigQuery — Medallion</div>
+      <div class="bq-col">
+
+        <!-- Bronze -->
+        <div class="bq-wrapper">
+          <div class="bq-wrapper-header" style="color:#d97706;">
+            <div class="bq-icon" style="background:#78350f;">B</div>
+            risklens_bronze
+          </div>
+          <div class="bq-table-row bronze">
+            <span class="tname" style="color:#d97706;">rates_r</span>
+            <span class="tdesc">SOFR, DFF, 10Y, HY, VIX</span>
+          </div>
+          <div class="bq-table-row bronze">
+            <span class="tname" style="color:#d97706;">prices_r</span>
+            <span class="tdesc">OHLCV daily prices</span>
+          </div>
+          <div class="bq-table-row bronze" style="opacity:0.5;">
+            <span class="tname" style="color:#d97706;">trades_r</span>
+            <span class="tdesc">OTC trades (empty)</span>
+          </div>
+          <div class="bq-table-row bronze">
+            <span class="tname" style="color:#d97706;">risk_outputs_s</span>
+            <span class="tdesc">Synthetic VaR/ES/P&L</span>
+          </div>
+        </div>
+
+        <!-- Silver transform arrow hint -->
+        <div style="font-size:8.5px;color:#475569;text-align:center;font-family:'JetBrains Mono',monospace;">silver_transform.py · silver_enrich.py ↓</div>
+
+        <!-- Silver -->
+        <div class="bq-wrapper">
+          <div class="bq-wrapper-header" style="color:#94a3b8;">
+            <div class="bq-icon" style="background:#334155;">S</div>
+            silver
+          </div>
+          <div class="bq-table-row silver">
+            <span class="tname" style="color:#94a3b8;">rates</span>
+            <span class="tdesc">cleaned, validated</span>
+          </div>
+          <div class="bq-table-row silver">
+            <span class="tname" style="color:#94a3b8;">prices</span>
+            <span class="tdesc">cleaned, validated</span>
+          </div>
+          <div class="bq-table-row silver">
+            <span class="tname" style="color:#94a3b8;">trades</span>
+            <span class="tdesc">cleaned</span>
+          </div>
+          <div class="bq-table-row silver">
+            <span class="tname" style="color:#94a3b8;">risk_outputs</span>
+            <span class="tdesc">cleaned risk data</span>
+          </div>
+          <div class="bq-table-row silver">
+            <span class="tname" style="color:#94a3b8;">risk_enriched</span>
+            <span class="tdesc">+ SOFR/VIX/HY context</span>
+          </div>
+        </div>
+
+        <!-- Gold -->
+        <div class="bq-wrapper">
+          <div class="bq-wrapper-header" style="color:#fbbf24;">
+            <div class="bq-icon" style="background:#92400e;">G</div>
+            gold — FRTB Metrics
+          </div>
+          <div class="bq-table-row gold">
+            <span class="tname" style="color:#fbbf24;">backtesting</span>
+            <span class="tdesc">VaR 99% exceptions · traffic light</span>
+          </div>
+          <div class="bq-table-row gold">
+            <span class="tname" style="color:#fbbf24;">es_outputs</span>
+            <span class="tdesc">ES 97.5% · liquidity horizon</span>
+          </div>
+          <div class="bq-table-row gold">
+            <span class="tname" style="color:#fbbf24;">capital_charge</span>
+            <span class="tdesc">ES × (3.0 + TL multiplier)</span>
+          </div>
+          <div class="bq-table-row gold">
+            <span class="tname" style="color:#fbbf24;">pnl_vectors</span>
+            <span class="tdesc">Hypothetical vs actual P&L</span>
+          </div>
+          <div class="bq-table-row gold">
+            <span class="tname" style="color:#fbbf24;">plat_results</span>
+            <span class="tdesc">UPL ratio · Spearman · KS</span>
+          </div>
+          <div class="bq-table-row gold">
+            <span class="tname" style="color:#fbbf24;">rfet_results</span>
+            <span class="tdesc">≥75 obs/12m OR ≥25/90d</span>
+          </div>
+          <div class="bq-table-row gold">
+            <span class="tname" style="color:#fbbf24;">risk_summary</span>
+            <span class="tdesc">Consolidated regulatory report</span>
+          </div>
+          <div class="bq-table-row gold">
+            <span class="tname" style="color:#fbbf24;">trade_positions</span>
+            <span class="tdesc">MtM book of record</span>
+          </div>
+        </div>
+
+        <!-- Catalog -->
+        <div class="bq-wrapper">
+          <div class="bq-wrapper-header" style="color:#818cf8;">
+            <div class="bq-icon" style="background:#312e81;">C</div>
+            risklens_catalog
+          </div>
+          <div class="bq-table-row cat">
+            <span class="tname" style="color:#818cf8;">assets</span>
+            <span class="tdesc">20 catalogued assets</span>
+          </div>
+          <div class="bq-table-row cat">
+            <span class="tname" style="color:#818cf8;">ownership</span>
+            <span class="tdesc">data owners</span>
+          </div>
+          <div class="bq-table-row cat">
+            <span class="tname" style="color:#818cf8;">quality_scores</span>
+            <span class="tdesc">DQ metrics</span>
+          </div>
+          <div class="bq-table-row cat">
+            <span class="tname" style="color:#818cf8;">schema_registry</span>
+            <span class="tdesc">field definitions</span>
+          </div>
+          <div class="bq-table-row cat">
+            <span class="tname" style="color:#818cf8;">access_log</span>
+            <span class="tdesc">audit trail</span>
+          </div>
+        </div>
+
+        <!-- Lineage -->
+        <div class="bq-wrapper">
+          <div class="bq-wrapper-header" style="color:#c084fc;">
+            <div class="bq-icon" style="background:#581c87;">L</div>
+            risklens_lineage
+          </div>
+          <div class="bq-table-row" style="color:#c084fc;">
+            <span class="tname">nodes</span>
+            <span class="tdesc" style="color:#64748b;">graph vertices</span>
+          </div>
+          <div class="bq-table-row" style="color:#c084fc;">
+            <span class="tname">edges</span>
+            <span class="tdesc" style="color:#64748b;">+ edge stories</span>
+          </div>
+        </div>
+
+        <!-- Embeddings -->
+        <div class="bq-wrapper">
+          <div class="bq-wrapper-header" style="color:#a78bfa;">
+            <div class="bq-icon" style="background:#4c1d95;">E</div>
+            risklens_embeddings
+          </div>
+          <div class="bq-table-row rag">
+            <span class="tname" style="color:#a78bfa;">chunks</span>
+            <span class="tdesc">85 chunks (63 BQ + 22 UI)</span>
+          </div>
+          <div class="bq-table-row rag">
+            <span class="tname" style="color:#a78bfa;">vectors</span>
+            <span class="tdesc">768-dim, text-embedding-004</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- arrow 3 -->
+    <div class="c-arrow">
+      <svg width="28" height="1000" style="overflow:visible">
+        <defs>
+          <marker id="ah3" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill="#334155"/>
+          </marker>
+        </defs>
+        <line x1="14" y1="0" x2="14" y2="990" stroke="#334155" stroke-width="1.5" marker-end="url(#ah3)"/>
+        <text x="7" y="500" font-size="8" fill="#475569" transform="rotate(-90,7,500)" text-anchor="middle" font-family="Inter,sans-serif">BQ read / vector search</text>
+      </svg>
+    </div>
+
+    <!-- ── Col 4: RAG Pipeline + API ── -->
+    <div class="c-rag">
+      <div class="section-label rag">RAG / AI Pipeline</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+
+        <!-- Indexing -->
+        <div class="node rag">
+          <div class="node-title">Indexing Pipeline</div>
+          <div class="node-sub"><code style="font-size:8.5px;color:#a78bfa">indexing/run_indexing.py</code></div>
+          <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;">
+            <div style="font-size:9.5px;color:#c4b5fd;padding:3px 7px;background:#2d1b69;border-radius:4px;">
+              <b>chunker.py</b><br>
+              <span style="color:#7c6fb0;">63 BQ metadata chunks<br>+ 22 UI doc chunks = 85 total</span>
+            </div>
+            <div style="font-size:9.5px;color:#c4b5fd;padding:3px 7px;background:#2d1b69;border-radius:4px;">
+              <b>embedder.py</b><br>
+              <span style="color:#7c6fb0;">Vertex AI text-embedding-004<br>batch_size=20 → vectors</span>
+            </div>
+            <div style="font-size:9.5px;color:#c4b5fd;padding:3px 7px;background:#2d1b69;border-radius:4px;">
+              <b>bm25_index.py</b><br>
+              <span style="color:#7c6fb0;">BM25 index → GCS bucket<br>risklens-frtb-2026-indexes</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Query time -->
+        <div class="node rag">
+          <div class="node-title">Query Pipeline — /api/chat</div>
+          <div style="margin-top:7px;display:flex;flex-direction:column;gap:4px;">
+            <div style="font-size:9px;color:#a78bfa;padding:3px 7px;background:#1e1040;border-radius:4px;border-left:2px solid #7c3aed;">
+              1. User query → Relevance classifier
+            </div>
+            <div style="font-size:9px;color:#a78bfa;padding:3px 7px;background:#1e1040;border-radius:4px;border-left:2px solid #7c3aed;">
+              2. Parallel retrieval<br>
+              <span style="color:#7c6fb0;">• BM25 (GCS)<br>• Vector SEARCH cosine (BQ)</span>
+            </div>
+            <div style="font-size:9px;color:#a78bfa;padding:3px 7px;background:#1e1040;border-radius:4px;border-left:2px solid #7c3aed;">
+              3. RRF merge → top 8 chunks
+            </div>
+            <div style="font-size:9px;color:#a78bfa;padding:3px 7px;background:#1e1040;border-radius:4px;border-left:2px solid #7c3aed;">
+              4. LangChain LCEL chain<br>
+              <span style="color:#7c6fb0;">→ Claude claude-sonnet-4-6 (Anthropic)</span>
+            </div>
+            <div style="font-size:9px;color:#a78bfa;padding:3px 7px;background:#1e1040;border-radius:4px;border-left:2px solid #7c3aed;">
+              5. Streamed SSE response<br>
+              <span style="color:#7c6fb0;">LangSmith traces every call</span>
+            </div>
+          </div>
+          <span class="node-tag rag" style="margin-top:6px;">RAG · Hybrid Retrieval</span>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- arrow 4 -->
+    <div class="c-arrow">
+      <svg width="28" height="600" style="overflow:visible">
+        <defs>
+          <marker id="ah4" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill="#334155"/>
+          </marker>
+        </defs>
+        <line x1="14" y1="0" x2="14" y2="590" stroke="#334155" stroke-width="1.5" marker-end="url(#ah4)"/>
+        <text x="7" y="300" font-size="8" fill="#475569" transform="rotate(-90,7,300)" text-anchor="middle" font-family="Inter,sans-serif">JSON / SSE</text>
+      </svg>
+    </div>
+
+    <!-- ── Col 5: API + Frontend ── -->
+    <div class="c-api">
+      <div class="section-label api">API + Frontend — GKE</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+
+        <!-- FastAPI -->
+        <div class="node api">
+          <div class="node-title">FastAPI Backend</div>
+          <div class="node-sub" style="margin-bottom:6px;">GKE pod: <code style="color:#22d3ee;font-size:9px;">risklens-api</code></div>
+          <div style="display:flex;flex-direction:column;gap:3px;">
+            <div style="font-size:9.5px;padding:2px 7px;background:#041a25;border-radius:4px;font-family:'JetBrains Mono',monospace;color:#0ea5e9;">/api/catalog<span style="color:#334155;float:right;font-size:8.5px;">assets · schemas · DQ</span></div>
+            <div style="font-size:9.5px;padding:2px 7px;background:#041a25;border-radius:4px;font-family:'JetBrains Mono',monospace;color:#0ea5e9;">/api/lineage<span style="color:#334155;float:right;font-size:8.5px;">graph · edge stories</span></div>
+            <div style="font-size:9.5px;padding:2px 7px;background:#041a25;border-radius:4px;font-family:'JetBrains Mono',monospace;color:#0ea5e9;">/api/governance<span style="color:#334155;float:right;font-size:8.5px;">SLA · ownership</span></div>
+            <div style="font-size:9.5px;padding:2px 7px;background:#041a25;border-radius:4px;font-family:'JetBrains Mono',monospace;color:#0ea5e9;">/api/assets<span style="color:#334155;float:right;font-size:8.5px;">asset detail</span></div>
+            <div style="font-size:9.5px;padding:2px 7px;background:#041a25;border-radius:4px;font-family:'JetBrains Mono',monospace;color:#0ea5e9;">/api/search<span style="color:#334155;float:right;font-size:8.5px;">full-text</span></div>
+            <div style="font-size:9.5px;padding:2px 7px;background:#0d0d30;border-radius:4px;font-family:'JetBrains Mono',monospace;color:#a78bfa;">/api/chat<span style="color:#7c6fb0;float:right;font-size:8.5px;">RAG · SSE stream</span></div>
+          </div>
+        </div>
+
+        <!-- React Frontend -->
+        <div class="node ui">
+          <div class="node-title">React Frontend</div>
+          <div class="node-sub" style="margin-bottom:6px;">GKE pod: <code style="color:#f472b6;font-size:9px;">risklens-frontend</code><br>IP: <code style="color:#f472b6;font-size:9px;">34.102.203.211</code></div>
+          <div style="display:flex;flex-direction:column;gap:3px;">
+            <div style="font-size:9.5px;padding:2px 7px;background:#150510;border-radius:4px;color:#f472b6;">Catalog<span style="color:#4b1535;float:right;font-size:8.5px;">20 assets · filter</span></div>
+            <div style="font-size:9.5px;padding:2px 7px;background:#150510;border-radius:4px;color:#f472b6;">Lineage<span style="color:#4b1535;float:right;font-size:8.5px;">ReactFlow · dagre</span></div>
+            <div style="font-size:9.5px;padding:2px 7px;background:#150510;border-radius:4px;color:#f472b6;">Governance<span style="color:#4b1535;float:right;font-size:8.5px;">SLA · DQ scores</span></div>
+            <div style="font-size:9.5px;padding:2px 7px;background:#150510;border-radius:4px;color:#f472b6;">FRTB Risk<span style="color:#4b1535;float:right;font-size:8.5px;">5 tabs · Recharts</span></div>
+            <div style="font-size:9.5px;padding:2px 7px;background:#150510;border-radius:4px;color:#f472b6;font-weight:600;">ChatPanel<span style="color:#4b1535;float:right;font-size:8.5px;">RAG · citations</span></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- arrow 5 -->
+    <div class="c-arrow">
+      <svg width="28" height="500" style="overflow:visible">
+        <defs>
+          <marker id="ah5" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill="#334155"/>
+          </marker>
+        </defs>
+        <line x1="14" y1="0" x2="14" y2="490" stroke="#334155" stroke-width="1.5" marker-end="url(#ah5)"/>
+      </svg>
+    </div>
+
+    <!-- ── Col 6: User ── -->
+    <div class="c-user">
+      <div class="section-label" style="color:#94a3b8;border-color:#334155;font-size:9px;">User</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding-top:10px;">
+        <div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#1e3a8a,#4c1d95);border:2px solid #334155;display:flex;align-items:center;justify-content:center;font-size:22px;">👤</div>
+        <div style="text-align:center;font-size:9.5px;color:#64748b;line-height:1.5;">Browser<br>/ API Client</div>
+      </div>
+    </div>
+
+  </div><!-- /.flow-row -->
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- Infrastructure strip                                           -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="infra-strip">
+    <div class="infra-strip-header">GCP Infrastructure</div>
+    <div class="infra-nodes">
+
+      <div class="infra-node">
+        <div class="infra-node-title">GKE Standard</div>
+        <div class="infra-node-sub">2 pods: api + frontend<br>HPA auto-scaling<br>GCP Ingress · IP 34.102.203.211</div>
+      </div>
+
+      <div class="infra-node">
+        <div class="infra-node-title">Artifact Registry</div>
+        <div class="infra-node-sub">Docker images<br>api:latest · frontend:latest<br>GitHub Actions CI/CD</div>
+      </div>
+
+      <div class="infra-node">
+        <div class="infra-node-title">GCS Buckets</div>
+        <div class="infra-node-sub">risklens-frtb-2026<br>(raw parquet)<br>risklens-frtb-2026-indexes<br>(BM25 index)</div>
+      </div>
+
+      <div class="infra-node">
+        <div class="infra-node-title">Secret Manager</div>
+        <div class="infra-node-sub">Anthropic API key<br>FRED API key<br>LangSmith API key</div>
+      </div>
+
+      <div class="infra-node">
+        <div class="infra-node-title">Workload Identity</div>
+        <div class="infra-node-sub">GKE → GCP auth<br>No service account keys<br>Secure by default</div>
+      </div>
+
+      <div class="infra-node">
+        <div class="infra-node-title">GitHub Actions CI/CD</div>
+        <div class="infra-node-sub">ruff lint<br>→ Docker build<br>→ push to Registry<br>→ kubectl deploy</div>
+      </div>
+
+      <div class="infra-node">
+        <div class="infra-node-title">Vertex AI</div>
+        <div class="infra-node-sub">text-embedding-004<br>768-dim embeddings<br>batch_size=20</div>
+      </div>
+
+      <div class="infra-node">
+        <div class="infra-node-title">LangSmith</div>
+        <div class="infra-node-sub">LLM observability<br>Traces every /api/chat<br>call end-to-end</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Footer ── -->
+  <div style="margin-top:20px;text-align:center;font-size:10px;color:#334155;">
+    RiskLens · GCP-native FRTB Data Catalog · Portfolio project for Atlan Field Engineer · Built April 2026
+  </div>
+
+</div><!-- /.page -->
+</body>
+</html>
