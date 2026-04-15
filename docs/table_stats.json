@@ -1,6 +1,6 @@
 {
   "project": "risklens-frtb-2026",
-  "collected_at": "2026-04-15T04:07:59.634676Z",
+  "collected_at": "2026-04-15T05:13:21.358813Z",
   "datasets": {
     "risklens_bronze": {
       "tables": {
@@ -413,9 +413,7 @@
           "modified": "2026-04-14T17:39:09.052000+00:00",
           "partition_field": "ingested_at",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "asset_class"
-          ],
+          "clustering_fields": "asset_class",
           "num_columns": 16,
           "columns": [
             {
@@ -529,10 +527,7 @@
           "modified": "2026-04-14T07:17:08.599000+00:00",
           "partition_field": "processed_at",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "asset_class",
-            "currency"
-          ],
+          "clustering_fields": "asset_class, currency",
           "num_columns": 10,
           "columns": [
             {
@@ -606,11 +601,7 @@
           "modified": "2026-04-14T18:11:35.428000+00:00",
           "partition_field": "date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "ticker",
-            "asset_class",
-            "currency"
-          ],
+          "clustering_fields": "ticker, asset_class, currency",
           "num_columns": 13,
           "columns": [
             {
@@ -800,10 +791,7 @@
           "modified": "2026-04-14T18:10:48.628000+00:00",
           "partition_field": "date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "series_id",
-            "domain"
-          ],
+          "clustering_fields": "series_id, domain",
           "num_columns": 9,
           "columns": [
             {
@@ -945,9 +933,7 @@
           "modified": "2026-04-14T18:13:38.653000+00:00",
           "partition_field": "calc_date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "desk"
-          ],
+          "clustering_fields": "desk",
           "num_columns": 16,
           "columns": [
             {
@@ -1057,9 +1043,7 @@
           "modified": "2026-04-14T18:12:09.211000+00:00",
           "partition_field": "calc_date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "desk"
-          ],
+          "clustering_fields": "desk",
           "num_columns": 17,
           "columns": [
             {
@@ -1279,10 +1263,7 @@
           "modified": "2026-04-14T23:25:36.445000+00:00",
           "partition_field": "execution_timestamp",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "asset_class",
-            "currency"
-          ],
+          "clustering_fields": "asset_class, currency",
           "num_columns": 15,
           "columns": [
             {
@@ -1381,6 +1362,284 @@
     },
     "risklens_gold": {
       "tables": {
+        "_archive_es_outputs_s_20260415": {
+          "full_id": "risklens_gold._archive_es_outputs_s_20260415",
+          "num_rows": 326,
+          "num_bytes": 17080,
+          "size_mb": 0.016,
+          "created": "2026-04-15T05:10:08.933000+00:00",
+          "modified": "2026-04-15T05:10:08.933000+00:00",
+          "partition_field": null,
+          "partition_type": null,
+          "clustering_fields": null,
+          "num_columns": 6,
+          "columns": [
+            {
+              "name": "calc_date",
+              "type": "DATE",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "desk",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "es_975_1d",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "es_975_10d",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "trade_date",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "processed_at",
+              "type": "DATETIME",
+              "mode": "NULLABLE",
+              "description": ""
+            }
+          ]
+        },
+        "_archive_pnl_vectors_s_20260415": {
+          "full_id": "risklens_gold._archive_pnl_vectors_s_20260415",
+          "num_rows": 325,
+          "num_bytes": 21255,
+          "size_mb": 0.02,
+          "created": "2026-04-15T05:10:13.166000+00:00",
+          "modified": "2026-04-15T05:10:13.166000+00:00",
+          "partition_field": null,
+          "partition_type": null,
+          "clustering_fields": null,
+          "num_columns": 8,
+          "columns": [
+            {
+              "name": "calc_date",
+              "type": "DATE",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "desk",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "scenarios",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "num_scenarios",
+              "type": "INTEGER",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "mean_pnl",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "std_pnl",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "trade_date",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "processed_at",
+              "type": "DATETIME",
+              "mode": "NULLABLE",
+              "description": ""
+            }
+          ]
+        },
+        "_archive_risk_summary_s_20260415": {
+          "full_id": "risklens_gold._archive_risk_summary_s_20260415",
+          "num_rows": 1373126,
+          "num_bytes": 168095942,
+          "size_mb": 160.309,
+          "created": "2026-04-15T05:10:06.155000+00:00",
+          "modified": "2026-04-15T05:10:06.155000+00:00",
+          "partition_field": null,
+          "partition_type": null,
+          "clustering_fields": null,
+          "num_columns": 15,
+          "columns": [
+            {
+              "name": "calc_date",
+              "type": "DATE",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "desk",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "var_99_1d",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "var_99_10d",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "method",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "scenarios",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "trade_date",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "processed_at",
+              "type": "DATETIME",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "es_975_1d",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "es_975_10d",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "mean_pnl",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "std_pnl",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "num_scenarios",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "plat_pass",
+              "type": "BOOLEAN",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "report_generated_at",
+              "type": "DATETIME",
+              "mode": "NULLABLE",
+              "description": ""
+            }
+          ]
+        },
+        "_archive_var_outputs_s_20260415": {
+          "full_id": "risklens_gold._archive_var_outputs_s_20260415",
+          "num_rows": 326,
+          "num_bytes": 23928,
+          "size_mb": 0.023,
+          "created": "2026-04-15T05:10:16.663000+00:00",
+          "modified": "2026-04-15T05:10:16.663000+00:00",
+          "partition_field": null,
+          "partition_type": null,
+          "clustering_fields": null,
+          "num_columns": 8,
+          "columns": [
+            {
+              "name": "calc_date",
+              "type": "DATE",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "desk",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "var_99_1d",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "var_99_10d",
+              "type": "FLOAT",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "method",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "scenarios",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "trade_date",
+              "type": "STRING",
+              "mode": "NULLABLE",
+              "description": ""
+            },
+            {
+              "name": "processed_at",
+              "type": "DATETIME",
+              "mode": "NULLABLE",
+              "description": ""
+            }
+          ]
+        },
         "backtesting": {
           "full_id": "risklens_gold.backtesting",
           "num_rows": 326,
@@ -1390,10 +1649,7 @@
           "modified": "2026-04-14T19:04:11.500000+00:00",
           "partition_field": "calc_date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "desk",
-            "traffic_light_zone"
-          ],
+          "clustering_fields": "desk, traffic_light_zone",
           "num_columns": 17,
           "columns": [
             {
@@ -1509,10 +1765,7 @@
           "modified": "2026-04-14T19:05:30.587000+00:00",
           "partition_field": "calc_date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "desk",
-            "risk_class"
-          ],
+          "clustering_fields": "desk, risk_class",
           "num_columns": 13,
           "columns": [
             {
@@ -1604,10 +1857,7 @@
           "modified": "2026-04-14T19:04:30.535000+00:00",
           "partition_field": "calc_date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "desk",
-            "risk_class"
-          ],
+          "clustering_fields": "desk, risk_class",
           "num_columns": 9,
           "columns": [
             {
@@ -1666,56 +1916,6 @@
             }
           ]
         },
-        "es_outputs_s": {
-          "full_id": "risklens_gold.es_outputs_s",
-          "num_rows": 326,
-          "num_bytes": 17080,
-          "size_mb": 0.016,
-          "created": "2026-04-14T05:49:10.299000+00:00",
-          "modified": "2026-04-14T05:49:10.299000+00:00",
-          "partition_field": null,
-          "partition_type": null,
-          "clustering_fields": null,
-          "num_columns": 6,
-          "columns": [
-            {
-              "name": "calc_date",
-              "type": "DATE",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "desk",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "es_975_1d",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "es_975_10d",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "trade_date",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "processed_at",
-              "type": "DATETIME",
-              "mode": "NULLABLE",
-              "description": ""
-            }
-          ]
-        },
         "plat_results": {
           "full_id": "risklens_gold.plat_results",
           "num_rows": 5,
@@ -1725,10 +1925,7 @@
           "modified": "2026-04-14T19:04:59.820000+00:00",
           "partition_field": "calc_date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "desk",
-            "plat_pass"
-          ],
+          "clustering_fields": "desk, plat_pass",
           "num_columns": 18,
           "columns": [
             {
@@ -1850,10 +2047,7 @@
           "modified": "2026-04-14T19:04:44.609000+00:00",
           "partition_field": "calc_date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "desk",
-            "risk_class"
-          ],
+          "clustering_fields": "desk, risk_class",
           "num_columns": 12,
           "columns": [
             {
@@ -1930,68 +2124,6 @@
             }
           ]
         },
-        "pnl_vectors_s": {
-          "full_id": "risklens_gold.pnl_vectors_s",
-          "num_rows": 325,
-          "num_bytes": 21255,
-          "size_mb": 0.02,
-          "created": "2026-04-14T05:49:14.911000+00:00",
-          "modified": "2026-04-14T05:49:14.911000+00:00",
-          "partition_field": null,
-          "partition_type": null,
-          "clustering_fields": null,
-          "num_columns": 8,
-          "columns": [
-            {
-              "name": "calc_date",
-              "type": "DATE",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "desk",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "scenarios",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "num_scenarios",
-              "type": "INTEGER",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "mean_pnl",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "std_pnl",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "trade_date",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "processed_at",
-              "type": "DATETIME",
-              "mode": "NULLABLE",
-              "description": ""
-            }
-          ]
-        },
         "rfet_results": {
           "full_id": "risklens_gold.rfet_results",
           "num_rows": 14,
@@ -2001,10 +2133,7 @@
           "modified": "2026-04-14T19:05:48.664000+00:00",
           "partition_field": "rfet_date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "risk_class",
-            "rfet_pass"
-          ],
+          "clustering_fields": "risk_class, rfet_pass",
           "num_columns": 13,
           "columns": [
             {
@@ -2096,10 +2225,7 @@
           "modified": "2026-04-14T19:06:11.831000+00:00",
           "partition_field": "calc_date",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "desk",
-            "risk_class"
-          ],
+          "clustering_fields": "desk, risk_class",
           "num_columns": 20,
           "columns": [
             {
@@ -2224,110 +2350,6 @@
             }
           ]
         },
-        "risk_summary_s": {
-          "full_id": "risklens_gold.risk_summary_s",
-          "num_rows": 1373126,
-          "num_bytes": 168095942,
-          "size_mb": 160.309,
-          "created": "2026-04-14T05:49:20.343000+00:00",
-          "modified": "2026-04-14T05:49:20.343000+00:00",
-          "partition_field": null,
-          "partition_type": null,
-          "clustering_fields": null,
-          "num_columns": 15,
-          "columns": [
-            {
-              "name": "calc_date",
-              "type": "DATE",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "desk",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "var_99_1d",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "var_99_10d",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "method",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "scenarios",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "trade_date",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "processed_at",
-              "type": "DATETIME",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "es_975_1d",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "es_975_10d",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "mean_pnl",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "std_pnl",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "num_scenarios",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "plat_pass",
-              "type": "BOOLEAN",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "report_generated_at",
-              "type": "DATETIME",
-              "mode": "NULLABLE",
-              "description": ""
-            }
-          ]
-        },
         "trade_positions": {
           "full_id": "risklens_gold.trade_positions",
           "num_rows": 0,
@@ -2337,10 +2359,7 @@
           "modified": "2026-04-14T20:35:49.132000+00:00",
           "partition_field": "processed_at",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "asset_class",
-            "currency"
-          ],
+          "clustering_fields": "asset_class, currency",
           "num_columns": 11,
           "columns": [
             {
@@ -2410,68 +2429,6 @@
               "description": ""
             }
           ]
-        },
-        "var_outputs_s": {
-          "full_id": "risklens_gold.var_outputs_s",
-          "num_rows": 326,
-          "num_bytes": 23928,
-          "size_mb": 0.023,
-          "created": "2026-04-14T05:49:05.245000+00:00",
-          "modified": "2026-04-14T05:49:05.245000+00:00",
-          "partition_field": null,
-          "partition_type": null,
-          "clustering_fields": null,
-          "num_columns": 8,
-          "columns": [
-            {
-              "name": "calc_date",
-              "type": "DATE",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "desk",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "var_99_1d",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "var_99_10d",
-              "type": "FLOAT",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "method",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "scenarios",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "trade_date",
-              "type": "STRING",
-              "mode": "NULLABLE",
-              "description": ""
-            },
-            {
-              "name": "processed_at",
-              "type": "DATETIME",
-              "mode": "NULLABLE",
-              "description": ""
-            }
-          ]
         }
       }
     },
@@ -2486,10 +2443,7 @@
           "modified": "2026-04-15T00:58:59.333000+00:00",
           "partition_field": "timestamp",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "page",
-            "action"
-          ],
+          "clustering_fields": "page, action",
           "num_columns": 12,
           "columns": [
             {
@@ -2643,11 +2597,7 @@
           "modified": "2026-04-14T20:56:44.816000+00:00",
           "partition_field": null,
           "partition_type": null,
-          "clustering_fields": [
-            "domain",
-            "layer",
-            "type"
-          ],
+          "clustering_fields": "domain, layer, type",
           "num_columns": 11,
           "columns": [
             {
@@ -2807,10 +2757,7 @@
           "modified": "2026-04-14T07:24:46.641000+00:00",
           "partition_field": null,
           "partition_type": null,
-          "clustering_fields": [
-            "risk_class",
-            "business_line"
-          ],
+          "clustering_fields": "risk_class, business_line",
           "num_columns": 12,
           "columns": [
             {
@@ -2896,9 +2843,7 @@
           "modified": "2026-04-14T07:24:33.177000+00:00",
           "partition_field": null,
           "partition_type": null,
-          "clustering_fields": [
-            "team"
-          ],
+          "clustering_fields": "team",
           "num_columns": 6,
           "columns": [
             {
@@ -2998,10 +2943,7 @@
           "modified": "2026-04-15T00:26:43.041000+00:00",
           "partition_field": "last_checked",
           "partition_type": "DAY",
-          "clustering_fields": [
-            "asset_id",
-            "freshness_status"
-          ],
+          "clustering_fields": "asset_id, freshness_status",
           "num_columns": 6,
           "columns": [
             {
@@ -3101,9 +3043,7 @@
           "modified": "2026-04-14T07:24:42.603000+00:00",
           "partition_field": null,
           "partition_type": null,
-          "clustering_fields": [
-            "asset_id"
-          ],
+          "clustering_fields": "asset_id",
           "num_columns": 6,
           "columns": [
             {
@@ -3307,9 +3247,7 @@
           "modified": "2026-04-14T23:20:59.254000+00:00",
           "partition_field": null,
           "partition_type": null,
-          "clustering_fields": [
-            "relationship"
-          ],
+          "clustering_fields": "relationship",
           "num_columns": 6,
           "columns": [
             {
@@ -3409,10 +3347,7 @@
           "modified": "2026-04-14T23:20:49.586000+00:00",
           "partition_field": null,
           "partition_type": null,
-          "clustering_fields": [
-            "type",
-            "domain"
-          ],
+          "clustering_fields": "type, domain",
           "num_columns": 7,
           "columns": [
             {
@@ -3528,10 +3463,7 @@
           "modified": "2026-04-15T01:09:50.468000+00:00",
           "partition_field": null,
           "partition_type": null,
-          "clustering_fields": [
-            "source_type",
-            "domain"
-          ],
+          "clustering_fields": "source_type, domain",
           "num_columns": 6,
           "columns": [
             {

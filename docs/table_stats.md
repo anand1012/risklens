@@ -2,7 +2,7 @@
 
 **Project:** `risklens-frtb-2026`  
 **Summary:** 48 tables across 6 datasets | 1,508,080 total rows | 191.180 MB total  
-**Collected:** 2026-04-15T04:07:59.634676Z  
+**Collected:** 2026-04-15T05:13:21.358813Z  
 
 ## risklens_bronze
 **6 tables** | 65,747 total rows | 18.330 MB total
@@ -36,18 +36,18 @@
 
 | Table | Rows | Size (MB) | Partition Field | Clustering | Cols | Key Columns |
 |-------|------|-----------|----------------|------------|------|-------------|
+| `_archive_es_outputs_s_20260415` | 326 | 0.016 | `-` | - | 6 | calc_date, desk, es_975_1d, es_975_10d, trade_date |
+| `_archive_pnl_vectors_s_20260415` | 325 | 0.02 | `-` | - | 8 | calc_date, desk, scenarios, num_scenarios, mean_pnl |
+| `_archive_risk_summary_s_20260415` | 1,373,126 | 160.309 | `-` | - | 15 | calc_date, desk, var_99_1d, var_99_10d, method |
+| `_archive_var_outputs_s_20260415` | 326 | 0.023 | `-` | - | 8 | calc_date, desk, var_99_1d, var_99_10d, method |
 | `backtesting` | 326 | 0.043 | `calc_date` | desk, traffic_light_zone | 17 | desk, calc_date, var_99_1d, var_99_10d, hypothetical_pnl |
 | `capital_charge` | 390 | 0.039 | `calc_date` | desk, risk_class | 13 | calc_date, desk, risk_class, liquidity_horizon, es_975_1d |
 | `es_outputs` | 390 | 0.027 | `calc_date` | desk, risk_class | 9 | calc_date, desk, risk_class, liquidity_horizon, es_975_1d |
-| `es_outputs_s` | 326 | 0.016 | `-` | - | 6 | calc_date, desk, es_975_1d, es_975_10d, trade_date |
 | `plat_results` | 5 | 0.001 | `calc_date` | desk, plat_pass | 18 | calc_date, desk, window_start_date, window_end_date, observation_count |
 | `pnl_vectors` | 215 | 0.019 | `calc_date` | desk, risk_class | 12 | calc_date, desk, risk_class, hypothetical_pnl, actual_pnl |
-| `pnl_vectors_s` | 325 | 0.02 | `-` | - | 8 | calc_date, desk, scenarios, num_scenarios, mean_pnl |
 | `rfet_results` | 14 | 0.001 | `rfet_date` | risk_class, rfet_pass | 13 | rfet_date, risk_factor_id, risk_class, obs_12m_count, obs_90d_count |
 | `risk_summary` | 326 | 0.048 | `calc_date` | desk, risk_class | 20 | calc_date, desk, risk_class, liquidity_horizon, var_99_1d |
-| `risk_summary_s` | 1,373,126 | 160.309 | `-` | - | 15 | calc_date, desk, var_99_1d, var_99_10d, method |
 | `trade_positions` | 0 | 0.0 | `processed_at` | asset_class, currency | 11 | trade_id, currency, asset_class, underlying, notional_amount |
-| `var_outputs_s` | 326 | 0.023 | `-` | - | 8 | calc_date, desk, var_99_1d, var_99_10d, method |
 
 ## risklens_catalog
 **13 tables** | 1,700 total rows | 0.177 MB total
@@ -87,3 +87,4 @@
 | `chunks_s` | 40 | 0.013 | `-` | - | 6 | chunk_id, asset_id, text, source_type, domain |
 | `vectors` | 85 | 0.501 | `-` | - | 2 | chunk_id, embedding |
 | `vectors_s` | 40 | 0.236 | `-` | - | 2 | chunk_id, embedding |
+
