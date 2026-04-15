@@ -25,8 +25,12 @@ logger = logging.getLogger(__name__)
 
 _EMBED_MODEL = "text-embedding-004"
 _LOCATION = os.environ.get("GCP_REGION", "us-central1")
-# Vertex AI max batch size for text-embedding-004
-_BATCH_SIZE = 250
+# text-embedding-004 limits: 250 texts per call, 20,000 tokens per call.
+# With rich UI/workflow chunks averaging ~300 tokens each, batch_size=20
+# keeps every call well under the 20k token ceiling (~6,000 tokens max).
+_BATCH_SIZE = 20
+# Hard character cap per chunk to avoid per-text token overflow (2,048 tokens ≈ 8,000 chars).
+_MAX_CHARS = 7_500
 
 
 def _init_vertexai(project: str) -> TextEmbeddingModel:
@@ -66,7 +70,11 @@ def embed_and_store(
         bq.query(f"TRUNCATE TABLE `{vectors_table}`").result()
 
     now = datetime.now(timezone.utc).isoformat()
-    texts = [c.text for c in chunks]
+    # Truncate any chunk that exceeds the per-text character limit
+    texts = [c.text[:_MAX_CHARS] if len(c.text) > _MAX_CHARS else c.text for c in chunks]
+    if any(len(c.text) > _MAX_CHARS for c in chunks):
+        over = [c.chunk_id for c in chunks if len(c.text) > _MAX_CHARS]
+        logger.warning("Truncated %d oversized chunks: %s", len(over), over)
 
     logger.info("Embedding %d chunks with %s (batches of %d)…", len(chunks), _EMBED_MODEL, _BATCH_SIZE)
     all_embeddings: list[list[float]] = []
