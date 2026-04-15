@@ -58,6 +58,42 @@ EDGE_STORIES: dict[tuple[str, str], dict] = {
         "frequency": "Runs after bronze price ingestion",
         "owner": "Market Risk Data team",
     },
+    # ── Silver Enrich: Reference lookups ─────────────────────────────────────
+    ("ref_counterparty", "silver_trades"): {
+        "title": "Counterparty Master → Trade Enrichment",
+        "what": "Each trade row in silver.trades is enriched with legal entity details from the Counterparty Master: counterparty name, LEI (Legal Entity Identifier), netting agreement type, and credit tier. Joined on counterparty_id.",
+        "business_impact": "Without counterparty LEI, trades cannot be grouped into netting sets for CVA (Credit Valuation Adjustment) calculations. Under FRTB SA, the counterparty credit tier determines whether the SA-CCR exposure is subject to a higher risk weight. Missing counterparty data causes trades to fall back to the most conservative (highest capital) tier.",
+        "frequency": "Runs as part of silver_transform.py after bronze trade ingestion",
+        "owner": "Market Risk Data team",
+    },
+    ("ref_instrument_master", "silver_trades"): {
+        "title": "Instrument Master → FRTB Risk Classification",
+        "what": "Each trade is tagged with its FRTB risk class (GIRR, FX, EQ, COMM, CSR) and IMA/SA designation from the Instrument Master, joined on instrument_id. This classification drives which capital formula and liquidity horizon apply downstream.",
+        "business_impact": "The IMA/SA flag set here propagates all the way to the capital charge. A trade incorrectly classified as IMA when it should be SA can understate capital by 20–40%. The risk class also determines the liquidity horizon used in ES scaling — misclassifying GIRR as EQ would apply a 20-day horizon instead of 10 days, overstating capital by √2.",
+        "frequency": "Runs as part of silver_transform.py after bronze trade ingestion",
+        "owner": "Market Risk Data team",
+    },
+    ("ref_currency", "gold_trade_positions"): {
+        "title": "Currency Reference → FX Normalization",
+        "what": "Currency Reference provides ISO 4217 code, decimal places, and USD FX convention for every currency in the trade book. Used to normalize all notional amounts to USD in gold.trade_positions so cross-desk capital aggregation is currency-consistent.",
+        "business_impact": "All FRTB capital figures are reported in USD. A missing currency in the reference table causes that trade's notional to be excluded from the desk's capital base, understating exposure. Currency decimal mismatches (e.g., JPY has 0 decimal places vs USD's 2) would inflate JPY notionals by 100× if not corrected here.",
+        "frequency": "Runs as part of gold_aggregate_job after silver_enrich completes",
+        "owner": "Market Risk Data team",
+    },
+    ("silver_risk_outputs", "silver_risk_enriched"): {
+        "title": "Cleaned Risk Outputs → Market Context Enrichment (Base)",
+        "what": "silver.risk_outputs provides the core columns for silver_risk_enriched: var_99_1d, var_99_10d, es_975_1d, es_975_10d, mean_pnl, std_pnl, desk, calc_date, method, scenarios. This is the base table that gets joined with market rate context to produce the enriched silver table.",
+        "business_impact": "silver_risk_enriched is the single input to all four FRTB IMA gold builders (backtesting, ES outputs, P&L vectors, PLAT). Centralising the rate-join here means gold computations are faster and auditable: any rate mismatch is diagnosable at the silver level rather than hunting across four gold jobs.",
+        "frequency": "Runs as the first step of silver_enrich.py after silver_transform completes",
+        "owner": "Quant Analytics team",
+    },
+    ("silver_rates", "silver_risk_enriched"): {
+        "title": "Validated Rates → Risk Market Context (SOFR, VIX, HY Spread)",
+        "what": "Three market rate columns are joined from silver.rates onto each desk's calc_date: sofr_rate (SOFR or DFF fallback — the USD risk-free discount rate), vix_level (equity volatility regime indicator), hy_spread (ICE BofA HY credit spread — credit regime indicator). SOFR falls back to DFF for dates before 2018 when SOFR was not published.",
+        "business_impact": "sofr_rate is used for SOFR discounting in present value calculations across all IMA gold tables. vix_level and hy_spread provide market regime context that flags whether risk figures were computed in stressed or benign conditions — critical for FRTB stressed ES calibration. A missing rate on a calc_date defaults to: SOFR=5%, VIX=20, HY=3.5 — the hardcoded fallbacks in silver_enrich.py — which may understate or overstate stressed capital if market conditions deviated significantly.",
+        "frequency": "Concurrent with risk base join in silver_enrich.py",
+        "owner": "Quant Analytics team",
+    },
     # ── Silver Enrich (silver_enrich.py) ──────────────────────────────────────
     ("silver_trades", "silver_positions"): {
         "title": "Validated Trades → Asset Class Positions",
@@ -124,6 +160,13 @@ EDGE_STORIES: dict[tuple[str, str], dict] = {
         "business_impact": "PLAT validates that the IMA model explains actual P&L. Failing any one test puts the desk in the PLAT amber zone for 12 months. Failing for 12 consecutive months forces the desk to SA (Standardised Approach), which typically increases capital by 20–40% for complex desks.",
         "frequency": "Daily — rolling 12-month window updated each day",
         "owner": "Model Validation team",
+    },
+    ("bronze_fred_rates", "gold_rfet_results"): {
+        "title": "Raw Rates → RFET Observation Count (Bronze Direct Read)",
+        "what": "observation_count is computed by counting distinct rate_date values per series_id directly from the raw bronze table — not from silver. RFET checks whether each FRED rate series has ≥75 real market observations in the prior 12 months OR ≥25 in the prior 90 days to qualify as a modellable risk factor under FRTB IMA.",
+        "business_impact": "Reading from bronze is intentional and architecturally correct: silver forward-fills weekend and holiday gaps and removes outliers, which would inflate the count and make an ineligible factor appear eligible. A FRED rate series that fails RFET cannot be used in the IMA model and must be proxied. An ineligible GIRR factor forces SA capital charges on all trades sensitive to that factor — typically 20–40% more capital than IMA. RFET failures must be reported to the Risk Committee within 5 business days.",
+        "frequency": "Daily — rolling 12-month and 90-day observation windows recalculated from raw bronze",
+        "owner": "Regulatory Reporting team",
     },
     ("silver_rates", "gold_rfet_results"): {
         "title": "Validated Rates → Risk Factor Eligibility Test (BCBS 457 ¶76-80)",

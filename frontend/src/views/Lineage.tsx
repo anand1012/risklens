@@ -5,7 +5,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   Handle,
   useNodesState,
   useEdgesState,
@@ -29,6 +28,12 @@ const LAYER_BORDER: Record<string, string> = {
   bronze: '#b45309',
   silver: '#475569',
   gold:   '#d97706',
+}
+
+const LAYER_BG: Record<string, string> = {
+  bronze: '#1c1005',   // very dark amber tint
+  silver: '#0f1520',   // very dark slate-blue tint
+  gold:   '#1c1a05',   // very dark golden tint
 }
 
 const TYPE_ICON: Record<string, string> = {
@@ -98,8 +103,8 @@ function applyDagreLayout(
       position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
       data: { node: n },
       style: {
-        background: '#0f172a',
-        border: `1.5px solid ${LAYER_BORDER[n.layer] ?? '#334155'}`,
+        background: LAYER_BG[n.layer] ?? '#0f172a',
+        border: `2px solid ${LAYER_BORDER[n.layer] ?? '#334155'}`,
         borderRadius: 10,
         color: '#f1f5f9',
         width: NODE_W,
@@ -285,18 +290,17 @@ export default function Lineage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500">Hops</span>
-            {[1, 2, 3, 4].map((n) => (
-              <button
-                key={n}
-                onClick={() => setHops(n)}
-                className={`w-7 h-7 rounded text-xs font-medium transition-colors ${
-                  hops === n ? 'bg-brand-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                }`}
-              >
-                {n}
-              </button>
-            ))}
+            <span className="text-xs text-slate-500 whitespace-nowrap">Pipeline depth</span>
+            <select
+              value={hops}
+              onChange={(e) => setHops(Number(e.target.value))}
+              className="input text-xs font-mono"
+            >
+              <option value={1}>Direct connections (1 hop)</option>
+              <option value={2}>Standard view (2 hops)</option>
+              <option value={3}>Extended pipeline (3 hops)</option>
+              <option value={4}>Full pipeline (4 hops)</option>
+            </select>
           </div>
         </div>
       </div>
@@ -330,13 +334,6 @@ export default function Lineage() {
         >
           <Background color="#1e293b" gap={24} size={1} />
           <Controls className="[&>button]:bg-slate-800 [&>button]:border-slate-700 [&>button]:text-slate-300" />
-          <MiniMap
-            nodeColor={(n) => {
-              const b = (n.style?.border as string) ?? ''
-              return b.includes('#b45309') ? '#92400e' : b.includes('#d97706') ? '#78350f' : '#334155'
-            }}
-            className="bg-slate-900 border border-slate-800 rounded-xl"
-          />
         </ReactFlow>
 
         {graph && (
