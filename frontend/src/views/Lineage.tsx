@@ -291,18 +291,17 @@ export default function Lineage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500">Hops</span>
-            {[1, 2, 3, 4].map((n) => (
-              <button
-                key={n}
-                onClick={() => setHops(n)}
-                className={`w-7 h-7 rounded text-xs font-medium transition-colors ${
-                  hops === n ? 'bg-brand-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                }`}
-              >
-                {n}
-              </button>
-            ))}
+            <span className="text-xs text-slate-500 whitespace-nowrap">Pipeline depth</span>
+            <select
+              value={hops}
+              onChange={(e) => setHops(Number(e.target.value))}
+              className="input text-xs font-mono"
+            >
+              <option value={1}>Direct connections (1 hop)</option>
+              <option value={2}>Standard view (2 hops)</option>
+              <option value={3}>Extended pipeline (3 hops)</option>
+              <option value={4}>Full pipeline (4 hops)</option>
+            </select>
           </div>
         </div>
       </div>
