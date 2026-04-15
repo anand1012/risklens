@@ -3,6 +3,16 @@
 Last updated: 2026-04-15
 Source snapshot: `docs/table_stats.json` (collected 2026-04-15T05:13:21Z)
 
+## Groups
+
+| Group | Issues | Category | Handler |
+|-------|--------|----------|---------|
+| **A** | I-6, I-9 | AI Chat schema hallucination | `feature/fix-chat-schema-coverage` |
+| **B** | I-7, I-8 | Lineage graph display | `feature/fix-lineage-graph` |
+| **C** | I-5 (catalog/lineage/embeddings remainder) | Orphan table cleanup | `feature/cleanup-non-bronze-orphans` |
+
+Groups A and B are independent. Group C touches only `_s`/`_r` orphans; Group A only touches live catalog rows. All three are safe to run in parallel.
+
 ## Open (in progress)
 
 ### I-6 — AI Chat SLA query: schema error on `sla_status` column
