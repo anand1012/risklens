@@ -3,6 +3,7 @@ RiskLens — BigQuery client factory and shared query helpers.
 All routers import from here so we never create duplicate BQ clients.
 """
 
+import math
 import os
 from functools import lru_cache
 
@@ -31,4 +32,12 @@ def query_rows(sql: str, params: list | None = None) -> list[dict]:
         job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params))
     else:
         job = client.query(sql)
-    return [dict(row) for row in job.result()]
+    rows = []
+    for row in job.result():
+        d = dict(row)
+        # Replace NaN/Inf with None so JSON serialization doesn't fail
+        for k, v in d.items():
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                d[k] = None
+        rows.append(d)
+    return rows
