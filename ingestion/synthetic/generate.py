@@ -242,6 +242,8 @@ def gen_var_es(date: datetime, market_params: dict | None = None) -> pd.DataFram
             "method":       "Historical Simulation",
             "scenarios":    250,
             "calculated_at":datetime.utcnow().isoformat(),
+            "trade_date":   date.strftime("%Y-%m-%d"),
+            "ingested_at":  datetime.utcnow().isoformat(),
         })
     return pd.DataFrame(rows)
 
@@ -266,6 +268,8 @@ def gen_pnl_vectors(date: datetime, market_params: dict | None = None) -> pd.Dat
             "mean_pnl":     round(float(np.mean(scenarios)), 2),
             "std_pnl":      round(float(np.std(scenarios)), 2),
             "calculated_at":datetime.utcnow().isoformat(),
+            "trade_date":   date.strftime("%Y-%m-%d"),
+            "ingested_at":  datetime.utcnow().isoformat(),
         })
     return pd.DataFrame(rows)
 

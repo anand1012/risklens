@@ -65,31 +65,45 @@ RISK_FACTOR_MAP = {
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def read_silver(spark: SparkSession, project: str, table: str,
-                trade_date: str | None = None) -> DataFrame:
-    df = (
-        spark.read
-        .format("bigquery")
-        .option("project", project)
-        .option("dataset", "risklens_silver")
-        .option("table", table)
-        .load()
-    )
+                trade_date: str | None = None) -> DataFrame | None:
+    """Read from silver layer. Returns None if the table does not exist."""
+    try:
+        df = (
+            spark.read
+            .format("bigquery")
+            .option("project", project)
+            .option("dataset", "risklens_silver")
+            .option("table", table)
+            .load()
+        )
+    except Exception as e:
+        if "not found" in str(e).lower():
+            log.warning(f"  silver.{table} does not exist — returning None")
+            return None
+        raise
     if trade_date:
         df = df.filter(F.col("trade_date") == trade_date)
     return df
 
 
 def read_gold_table(spark: SparkSession, project: str,
-                    table: str, trade_date: str) -> DataFrame:
-    return (
-        spark.read
-        .format("bigquery")
-        .option("project", project)
-        .option("dataset", "risklens_gold")
-        .option("table", table)
-        .load()
-        .filter(F.col("trade_date") == trade_date)
-    )
+                    table: str, trade_date: str) -> DataFrame | None:
+    """Read from gold layer. Returns None if the table does not exist."""
+    try:
+        return (
+            spark.read
+            .format("bigquery")
+            .option("project", project)
+            .option("dataset", "risklens_gold")
+            .option("table", table)
+            .load()
+            .filter(F.col("trade_date") == trade_date)
+        )
+    except Exception as e:
+        if "not found" in str(e).lower():
+            log.warning(f"  gold.{table} does not exist — returning None")
+            return None
+        raise
 
 
 def write_gold(df: DataFrame, project: str, bucket: str,
@@ -197,7 +211,7 @@ def build_trade_positions(spark: SparkSession, project: str,
 
     positions = read_silver(spark, project, "positions", trade_date)
 
-    if positions.rdd.isEmpty():
+    if positions is None or positions.rdd.isEmpty():
         log.info("  No silver positions — skipping trade_positions.")
         return 0
 
@@ -226,7 +240,7 @@ def build_backtesting(spark: SparkSession, project: str,
     log.info("Building gold.backtesting")
 
     risk = read_silver(spark, project, "risk_enriched", trade_date)
-    if risk.rdd.isEmpty():
+    if risk is None or risk.rdd.isEmpty():
         log.info("  No silver risk_enriched data — skipping backtesting.")
         return 0
 
@@ -335,7 +349,7 @@ def build_es_outputs(spark: SparkSession, project: str,
     log.info("Building gold.es_outputs")
 
     risk = read_silver(spark, project, "risk_enriched", trade_date)
-    if risk.rdd.isEmpty():
+    if risk is None or risk.rdd.isEmpty():
         log.info("  No silver risk_enriched data — skipping es_outputs.")
         return 0
 
@@ -406,7 +420,7 @@ def build_pnl_vectors(spark: SparkSession, project: str,
     log.info("Building gold.pnl_vectors")
 
     risk = read_silver(spark, project, "risk_enriched", trade_date)
-    if risk.rdd.isEmpty():
+    if risk is None or risk.rdd.isEmpty():
         log.info("  No silver risk_enriched data — skipping pnl_vectors.")
         return 0
 
@@ -478,19 +492,18 @@ def build_plat_results(spark: SparkSession, project: str,
     """
     log.info("Building gold.plat_results")
 
-    try:
-        pnl_df = read_gold_table(spark, project, "pnl_vectors", trade_date)
-    except Exception as e:
-        log.warning(f"  Could not read pnl_vectors for PLAT: {e}")
-        return 0
+    pnl_df = read_gold_table(spark, project, "pnl_vectors", trade_date)
 
-    if pnl_df.rdd.isEmpty():
+    if pnl_df is None or pnl_df.rdd.isEmpty():
         log.info("  No pnl_vectors data — skipping plat_results.")
         return 0
 
     # Aggregate over the 12-month window available in silver
     # In production: window over 250 trading days of daily P&L observations
     pnl_all = read_silver(spark, project, "risk_enriched", None)  # full history
+    if pnl_all is None or pnl_all.rdd.isEmpty():
+        log.info("  No risk_enriched history — skipping plat_results.")
+        return 0
 
     window_agg = pnl_all.groupBy("desk").agg(
         F.count("calc_date").alias("observation_count"),
@@ -579,14 +592,10 @@ def build_capital_charge(spark: SparkSession, project: str,
     """
     log.info("Building gold.capital_charge")
 
-    try:
-        es_df = read_gold_table(spark, project, "es_outputs", trade_date)
-        bt_df = read_gold_table(spark, project, "backtesting", trade_date)
-    except Exception as e:
-        log.warning(f"  Could not read es_outputs/backtesting for capital_charge: {e}")
-        return 0
+    es_df = read_gold_table(spark, project, "es_outputs", trade_date)
+    bt_df = read_gold_table(spark, project, "backtesting", trade_date)
 
-    if es_df.rdd.isEmpty() or bt_df.rdd.isEmpty():
+    if es_df is None or bt_df is None or es_df.rdd.isEmpty() or bt_df.rdd.isEmpty():
         log.info("  Missing ES or backtesting data — skipping capital_charge.")
         return 0
 
@@ -740,13 +749,13 @@ def build_risk_summary(spark: SparkSession, project: str,
     """
     log.info("Building gold.risk_summary")
 
-    try:
-        bt_df   = read_gold_table(spark, project, "backtesting",    trade_date)
-        es_df   = read_gold_table(spark, project, "es_outputs",     trade_date)
-        plat_df = read_gold_table(spark, project, "plat_results",   trade_date)
-        cap_df  = read_gold_table(spark, project, "capital_charge", trade_date)
-    except Exception as e:
-        log.warning(f"  Could not read gold tables for risk_summary: {e}")
+    bt_df   = read_gold_table(spark, project, "backtesting",    trade_date)
+    es_df   = read_gold_table(spark, project, "es_outputs",     trade_date)
+    plat_df = read_gold_table(spark, project, "plat_results",   trade_date)
+    cap_df  = read_gold_table(spark, project, "capital_charge", trade_date)
+
+    if any(df is None for df in [bt_df, es_df, plat_df, cap_df]):
+        log.warning("  Missing gold tables for risk_summary — skipping.")
         return 0
 
     bt_slim   = bt_df.select(
@@ -838,7 +847,11 @@ def main():
     n_plat      = build_plat_results(  spark, args.project, args.bucket, args.date)
     n_cap       = build_capital_charge(spark, args.project, args.bucket, args.date)
     n_rfet      = build_rfet_results(  spark, args.project, args.bucket, args.date)
-    n_summary   = build_risk_summary(  spark, args.project, args.bucket, args.date)
+    try:
+        n_summary = build_risk_summary(spark, args.project, args.bucket, args.date)
+    except Exception as e:
+        log.error(f"  risk_summary failed: {e}")
+        n_summary = 0
 
     asset_counts = {
         "gold_trade_positions": n_positions,

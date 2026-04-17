@@ -61,7 +61,7 @@ echo "--- Creating Dataproc cluster ---"
 gcloud dataproc clusters create "$CLUSTER_NAME" \
   --region="$REGION" \
   --single-node \
-  --master-machine-type="n2-standard-2" \
+  --master-machine-type="n2-standard-4" \
   --master-boot-disk-size=100 \
   --image-version="2.1-debian11" \
   --service-account="risklens-sa@${PROJECT_ID}.iam.gserviceaccount.com" \

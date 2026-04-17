@@ -32,6 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bronze_synthetic")
@@ -85,7 +86,7 @@ BRONZE_TABLES = {
 
 
 def write_to_bigquery(spark: SparkSession, df_pd: pd.DataFrame,
-                      table: str, project: str, bucket: str, mode: str = "append"):
+                      table: str, project: str, bucket: str, mode: str = "overwrite"):
     """Convert pandas DataFrame to Spark and write to BigQuery."""
     if df_pd.empty:
         log.warning(f"  Empty DataFrame for {table} — skipping.")
@@ -99,6 +100,43 @@ def write_to_bigquery(spark: SparkSession, df_pd: pd.DataFrame,
                 df_pd[col] = df_pd[col].apply(
                     lambda x: str(x) if x is not None else None
                 )
+
+    # Fix mixed-type columns (e.g. str + NaN float from concat) that crash
+    # Spark schema inference.  Convert any object column containing NaN to
+    # nullable string so createDataFrame sees a uniform type.
+    for col in df_pd.columns:
+        if df_pd[col].dtype == object and df_pd[col].isna().any():
+            df_pd[col] = df_pd[col].where(df_pd[col].notna(), None)
+
+    # Fix mixed int+string columns (e.g. scenarios: 250 from gen_var_es
+    # vs scenarios: "[1.2, ...]" from gen_pnl_vectors).  Cast to string
+    # so Spark sees a uniform StringType.
+    for col in df_pd.columns:
+        if df_pd[col].dtype == object:
+            non_null = df_pd[col].dropna()
+            if len(non_null) > 0:
+                has_numeric = any(isinstance(x, (int, float)) for x in non_null)
+                has_string = any(isinstance(x, str) for x in non_null)
+                if has_numeric and has_string:
+                    df_pd[col] = df_pd[col].apply(
+                        lambda x: str(x) if x is not None else None
+                    )
+
+    # Convert date/datetime-like string columns so Spark infers DateType
+    # or TimestampType matching BQ's DATE/DATETIME column types.
+    import re
+    _date_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    _datetime_re = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:")
+    for col in df_pd.columns:
+        if df_pd[col].dtype == object:
+            sample = df_pd[col].dropna().head(3)
+            if len(sample) == 0:
+                continue
+            sample_strs = [str(v) for v in sample]
+            if all(_date_re.match(s) for s in sample_strs):
+                df_pd[col] = pd.to_datetime(df_pd[col]).dt.date
+            elif all(_datetime_re.match(s) for s in sample_strs):
+                df_pd[col] = pd.to_datetime(df_pd[col])
 
     dataset, table_name = table.split(".")
     df_spark = spark.createDataFrame(df_pd)
@@ -133,17 +171,20 @@ def load_market_params(spark: SparkSession, project: str,
     try:
         df = (
             spark.read.format("bigquery")
-            .option("query", f"""
-                SELECT
-                    CAST(date AS STRING) AS date,
-                    series_id,
-                    value
-                FROM `{project}.risklens_bronze.rates_r`
-                WHERE series_id IN ('SOFR', 'DFF', 'VIXCLS', 'BAMLH0A0HYM2')
-                  AND date BETWEEN '{start_str}' AND '{end_str}'
-                  AND value IS NOT NULL
-            """)
+            .option("project", project)
+            .option("dataset", "risklens_bronze")
+            .option("table",   "rates_r")
             .load()
+            .filter(
+                (F.col("series_id").isin("SOFR", "DFF", "VIXCLS", "BAMLH0A0HYM2"))
+                & (F.col("date").between(start_str, end_str))
+                & (F.col("value").isNotNull())
+            )
+            .select(
+                F.col("date").cast("string").alias("date"),
+                "series_id",
+                "value",
+            )
         )
         rows = df.collect()
         log.info(f"  Loaded {len(rows)} market param rows from bronze.rates_r")

@@ -40,16 +40,23 @@ log = logging.getLogger("silver_enrich")
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def read_silver(spark: SparkSession, project: str, table: str,
-                trade_date: str | None = None) -> DataFrame:
-    """Read from cleaned silver layer, optionally filtered by trade_date."""
-    df = (
-        spark.read
-        .format("bigquery")
-        .option("project", project)
-        .option("dataset", "risklens_silver")
-        .option("table", table)
-        .load()
-    )
+                trade_date: str | None = None) -> DataFrame | None:
+    """Read from cleaned silver layer, optionally filtered by trade_date.
+    Returns None if the table does not exist."""
+    try:
+        df = (
+            spark.read
+            .format("bigquery")
+            .option("project", project)
+            .option("dataset", "risklens_silver")
+            .option("table", table)
+            .load()
+        )
+    except Exception as e:
+        if "not found" in str(e).lower():
+            log.warning(f"  silver.{table} does not exist — returning None")
+            return None
+        raise
     if trade_date:
         df = df.filter(F.col("trade_date") == trade_date)
     return df
@@ -102,7 +109,7 @@ def enrich_positions(spark: SparkSession, project: str,
     prices = read_silver(spark, project, "prices", trade_date)
     rates  = read_silver(spark, project, "rates",  trade_date)
 
-    if trades.rdd.isEmpty():
+    if trades is None or trades.rdd.isEmpty():
         log.info("  No silver trades — skipping positions.")
         return 0
 
@@ -178,7 +185,7 @@ def enrich_risk(spark: SparkSession, project: str,
     # Read all rates history so we can match any calc_date in risk
     rates = read_silver(spark, project, "rates", None)
 
-    if risk.rdd.isEmpty():
+    if risk is None or risk.rdd.isEmpty():
         log.info("  No silver risk data — skipping risk_enriched.")
         return 0
 
