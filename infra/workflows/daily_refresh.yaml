@@ -1,0 +1,298 @@
+# RiskLens — Daily Data Refresh Workflow
+#
+# Triggered daily by Cloud Scheduler (via setup_scheduler.sh).
+# Replicates refresh_data.sh logic using GCP-native API calls:
+#   Bronze (external parallel) → Bronze (synthetic sequential)
+#   → Silver transform → Silver enrich → Gold aggregate
+#
+# Cluster is always deleted on exit, even on failure.
+#
+# Runtime args (passed by Cloud Scheduler as JSON body):
+#   project_id  : GCP project (default: risklens-frtb-2026)
+#   region      : Dataproc region (default: us-east1)
+
+main:
+  params: [args]
+  steps:
+
+    - init:
+        assign:
+          - project_id:   ${default(map.get(args, "project_id"),  "risklens-frtb-2026")}
+          - region:       ${default(map.get(args, "region"),       "us-east1")}
+          - bucket:       ${"risklens-raw-" + project_id}
+          - jobs_gcs:     ${"gs://risklens-raw-" + project_id + "/jobs"}
+          - jar:          "gs://spark-lib/bigquery/spark-bigquery-with-dependencies_2.12-0.36.1.jar"
+          - cluster_name: ${"risklens-daily-" + text.substring(time.format(sys.now()), 0, 10)}
+          - today:        ${text.substring(time.format(sys.now()), 0, 10)}
+          - dp_base:      ${"https://dataproc.googleapis.com/v1/projects/" + project_id + "/regions/" + region}
+
+    # Pre-compute all Spark job arg lists as variables (Cloud Workflows
+    # expression syntax inside flow-sequence lists is unreliable).
+    - init_args:
+        assign:
+          - bronze_args:
+              - ${"--project=" + project_id}
+              - ${"--bucket=" + bucket}
+              - "--days=30"
+          - silver_args:
+              - ${"--project=" + project_id}
+              - ${"--bucket=" + bucket}
+              - ${"--date=" + today}
+          - generate_py:
+              - ${jobs_gcs + "/generate.py"}
+          - jar_list:
+              - ${jar}
+
+    # ── Create ephemeral Dataproc cluster ────────────────────────────────────
+    - create_cluster:
+        call: http.post
+        args:
+          url: ${dp_base + "/clusters"}
+          auth:
+            type: OAuth2
+          body:
+            clusterName: ${cluster_name}
+            config:
+              masterConfig:
+                numInstances: 1
+                machineTypeUri: "n2-standard-4"
+                diskConfig:
+                  bootDiskSizeGb: 100
+              workerConfig:
+                numInstances: 0
+              softwareConfig:
+                imageVersion: "2.1-debian11"
+                properties:
+                  dataproc:dataproc.allow.zero.workers: "true"
+              initializationActions:
+                - executableFile: ${"gs://risklens-raw-" + project_id + "/scripts/dataproc_init.sh"}
+              gceClusterConfig:
+                serviceAccount: ${"risklens-sa@" + project_id + ".iam.gserviceaccount.com"}
+        result: create_result
+
+    # ── Poll until cluster is RUNNING ─────────────────────────────────────────
+    - wait_cluster:
+        call: http.get
+        args:
+          url: ${dp_base + "/clusters/" + cluster_name}
+          auth:
+            type: OAuth2
+        result: cluster_info
+
+    - check_cluster_state:
+        switch:
+          - condition: ${cluster_info.body.status.state == "RUNNING"}
+            next: bronze_external
+          - condition: ${cluster_info.body.status.state == "ERROR"}
+            raise:
+              code: 500
+              message: "Cluster creation failed"
+        next: sleep_cluster
+
+    - sleep_cluster:
+        call: sys.sleep
+        args:
+          seconds: 30
+        next: wait_cluster
+
+    # ── Bronze layer step 1: external sources (parallel) ─────────────────────
+    - bronze_external:
+        parallel:
+          branches:
+            - submit_trades:
+                steps:
+                  - submit_trades_job:
+                      call: http.post
+                      args:
+                        url: ${dp_base + "/jobs:submit"}
+                        auth:
+                          type: OAuth2
+                        body:
+                          job:
+                            placement:
+                              clusterName: ${cluster_name}
+                            pysparkJob:
+                              mainPythonFileUri: ${jobs_gcs + "/bronze_trades.py"}
+                              jarFileUris: ${jar_list}
+                              pythonFileUris: ${generate_py}
+                              args: ${bronze_args}
+                      result: trades_submit
+                  - wait_trades:
+                      call: wait_job
+                      args:
+                        dp_base: ${dp_base}
+                        job_id: ${trades_submit.body.reference.jobId}
+                      result: trades_result
+
+            - submit_rates:
+                steps:
+                  - submit_rates_job:
+                      call: http.post
+                      args:
+                        url: ${dp_base + "/jobs:submit"}
+                        auth:
+                          type: OAuth2
+                        body:
+                          job:
+                            placement:
+                              clusterName: ${cluster_name}
+                            pysparkJob:
+                              mainPythonFileUri: ${jobs_gcs + "/bronze_rates.py"}
+                              jarFileUris: ${jar_list}
+                              pythonFileUris: ${generate_py}
+                              args: ${bronze_args}
+                      result: rates_submit
+                  - wait_rates:
+                      call: wait_job
+                      args:
+                        dp_base: ${dp_base}
+                        job_id: ${rates_submit.body.reference.jobId}
+                      result: rates_result
+
+            - submit_prices:
+                steps:
+                  - submit_prices_job:
+                      call: http.post
+                      args:
+                        url: ${dp_base + "/jobs:submit"}
+                        auth:
+                          type: OAuth2
+                        body:
+                          job:
+                            placement:
+                              clusterName: ${cluster_name}
+                            pysparkJob:
+                              mainPythonFileUri: ${jobs_gcs + "/bronze_prices.py"}
+                              jarFileUris: ${jar_list}
+                              pythonFileUris: ${generate_py}
+                              args: ${bronze_args}
+                      result: prices_submit
+                  - wait_prices:
+                      call: wait_job
+                      args:
+                        dp_base: ${dp_base}
+                        job_id: ${prices_submit.body.reference.jobId}
+                      result: prices_result
+
+    # ── Bronze layer step 2: synthetic ────────────────────────────────────────
+    - bronze_synthetic:
+        call: submit_and_wait
+        args:
+          dp_base:   ${dp_base}
+          cluster:   ${cluster_name}
+          script:    ${jobs_gcs + "/bronze_synthetic.py"}
+          jar_list:  ${jar_list}
+          py_files:  ${generate_py}
+          job_args:  ${bronze_args}
+        result: synthetic_result
+
+    # ── Silver transform ───────────────────────────────────────────────────────
+    - silver_transform:
+        call: submit_and_wait
+        args:
+          dp_base:   ${dp_base}
+          cluster:   ${cluster_name}
+          script:    ${jobs_gcs + "/silver_transform.py"}
+          jar_list:  ${jar_list}
+          py_files:  ${generate_py}
+          job_args:  ${silver_args}
+        result: silver_transform_result
+
+    # ── Silver enrich ──────────────────────────────────────────────────────────
+    - silver_enrich:
+        call: submit_and_wait
+        args:
+          dp_base:   ${dp_base}
+          cluster:   ${cluster_name}
+          script:    ${jobs_gcs + "/silver_enrich.py"}
+          jar_list:  ${jar_list}
+          py_files:  ${generate_py}
+          job_args:  ${silver_args}
+        result: silver_enrich_result
+
+    # ── Gold aggregate ─────────────────────────────────────────────────────────
+    - gold_aggregate:
+        call: submit_and_wait
+        args:
+          dp_base:   ${dp_base}
+          cluster:   ${cluster_name}
+          script:    ${jobs_gcs + "/gold_aggregate.py"}
+          jar_list:  ${jar_list}
+          py_files:  ${generate_py}
+          job_args:  ${silver_args}
+        result: gold_result
+
+    # ── Cleanup: always delete cluster ────────────────────────────────────────
+    - delete_cluster:
+        call: http.delete
+        args:
+          url: ${dp_base + "/clusters/" + cluster_name}
+          auth:
+            type: OAuth2
+        result: delete_result
+
+    - done:
+        return:
+          status: "success"
+          date: ${today}
+          cluster_deleted: true
+
+
+# ── Subworkflow: submit a PySpark job and poll until terminal state ───────────
+submit_and_wait:
+  params: [dp_base, cluster, script, jar_list, py_files, job_args]
+  steps:
+    - submit:
+        call: http.post
+        args:
+          url: ${dp_base + "/jobs:submit"}
+          auth:
+            type: OAuth2
+          body:
+            job:
+              placement:
+                clusterName: ${cluster}
+              pysparkJob:
+                mainPythonFileUri: ${script}
+                jarFileUris: ${jar_list}
+                pythonFileUris: ${py_files}
+                args: ${job_args}
+        result: submit_result
+    - poll:
+        call: wait_job
+        args:
+          dp_base: ${dp_base}
+          job_id:  ${submit_result.body.reference.jobId}
+        result: job_result
+    - return_result:
+        return: ${job_result}
+
+
+# ── Subworkflow: poll a Dataproc job until DONE / ERROR / CANCELLED ───────────
+wait_job:
+  params: [dp_base, job_id]
+  steps:
+    - get_job:
+        call: http.get
+        args:
+          url: ${dp_base + "/jobs/" + job_id}
+          auth:
+            type: OAuth2
+        result: job_info
+    - check_state:
+        switch:
+          - condition: ${job_info.body.status.state == "DONE"}
+            return: ${job_info.body}
+          - condition: ${job_info.body.status.state == "ERROR"}
+            raise:
+              code: 500
+              message: ${"Dataproc job " + job_id + " failed"}
+          - condition: ${job_info.body.status.state == "CANCELLED"}
+            raise:
+              code: 500
+              message: ${"Dataproc job " + job_id + " cancelled"}
+    - sleep:
+        call: sys.sleep
+        args:
+          seconds: 30
+        next: get_job
