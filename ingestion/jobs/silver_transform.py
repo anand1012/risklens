@@ -32,7 +32,14 @@ from pyspark.sql.types import (DateType, DoubleType, LongType, StringType,
                                 StructField, StructType, TimestampType)
 from pyspark.sql.window import Window
 
-logging.basicConfig(level=logging.INFO)
+try:
+    import google.cloud.logging as _cloud_logging
+    _cloud_logging.Client().setup_logging(
+        log_level=logging.INFO,
+        labels={"app": "risklens", "service": "ingestion", "layer": "silver", "job": "silver_transform"},
+    )
+except Exception:
+    logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("silver_transform")
 
 

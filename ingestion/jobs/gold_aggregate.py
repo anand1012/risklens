@@ -33,7 +33,14 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import (BooleanType, DoubleType, IntegerType,
                                 StringType, TimestampType)
 
-logging.basicConfig(level=logging.INFO)
+try:
+    import google.cloud.logging as _cloud_logging
+    _cloud_logging.Client().setup_logging(
+        log_level=logging.INFO,
+        labels={"app": "risklens", "service": "ingestion", "layer": "gold", "job": "gold_aggregate"},
+    )
+except Exception:
+    logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("gold_aggregate")
 
 # FRTB IMA risk class → liquidity horizon mapping (BCBS 457 ¶33-34)

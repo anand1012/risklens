@@ -30,7 +30,14 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import (DateType, DoubleType, LongType, StringType,
                                 StructField, StructType, TimestampType)
 
-logging.basicConfig(level=logging.INFO)
+try:
+    import google.cloud.logging as _cloud_logging
+    _cloud_logging.Client().setup_logging(
+        log_level=logging.INFO,
+        labels={"app": "risklens", "service": "ingestion", "layer": "bronze", "job": "bronze_prices"},
+    )
+except Exception:
+    logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bronze_prices")
 
 INSTRUMENTS = {

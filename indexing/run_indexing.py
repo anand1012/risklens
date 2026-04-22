@@ -16,11 +16,10 @@ import argparse
 import logging
 import sys
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%H:%M:%S",
-)
+from common.logging_setup import setup_cloud_logging
+
+# Install Cloud Logging as the root handler (falls back to basicConfig locally)
+setup_cloud_logging(labels={"service": "indexing"})
 logger = logging.getLogger(__name__)
 
 
