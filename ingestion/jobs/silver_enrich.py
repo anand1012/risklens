@@ -33,7 +33,14 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import DoubleType
 
-logging.basicConfig(level=logging.INFO)
+try:
+    import google.cloud.logging as _cloud_logging
+    _cloud_logging.Client().setup_logging(
+        log_level=logging.INFO,
+        labels={"app": "risklens", "service": "ingestion", "layer": "silver", "job": "silver_enrich"},
+    )
+except Exception:
+    logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("silver_enrich")
 
 

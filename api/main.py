@@ -28,13 +28,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from langsmith import Client as LangSmithClient
 
 from api.db.bigquery import get_client
+from api.middleware.logging_middleware import RequestLoggingMiddleware
 from api.routers import catalog, chat, governance, lineage, risk, search
 from indexing.bm25_index import load_from_gcs
+from common.logging_setup import setup_cloud_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-)
+# Install Cloud Logging as the root handler (falls back to basicConfig locally)
+setup_cloud_logging(labels={"service": "api"})
 logger = logging.getLogger(__name__)
 
 _GCS_BUCKET = os.environ.get("GCS_BUCKET", "risklens-frtb-2026-indexes")
@@ -86,6 +86,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # tighten to frontend origin in production

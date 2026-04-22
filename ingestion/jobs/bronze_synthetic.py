@@ -34,7 +34,14 @@ from pathlib import Path
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 
-logging.basicConfig(level=logging.INFO)
+try:
+    import google.cloud.logging as _cloud_logging
+    _cloud_logging.Client().setup_logging(
+        log_level=logging.INFO,
+        labels={"app": "risklens", "service": "ingestion", "layer": "bronze", "job": "bronze_synthetic"},
+    )
+except Exception:
+    logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bronze_synthetic")
 
 # On Dataproc, generate.py is added as a --py-file (flat import).

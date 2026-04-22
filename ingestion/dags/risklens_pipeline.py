@@ -24,6 +24,7 @@ Notes:
   - daily mode: processes --days 1 (normal schedule)
 """
 
+import logging
 import os
 from datetime import datetime, timedelta
 
@@ -171,23 +172,39 @@ def make_gold_job() -> dict:
 
 
 def log_pipeline_run(**context):
-    """Log pipeline run metadata to BigQuery access_log."""
+    """Log pipeline run metadata to BigQuery access_log and Cloud Logging."""
     from google.cloud import bigquery
     from datetime import datetime
     import uuid
 
-    client = bigquery.Client(project=PROJECT_ID)
-    rows = [{
-        "event_id":   str(uuid.uuid4()),
-        "page":       "pipeline",
-        "action":     "dag_run",
-        "detail":     f"risklens_pipeline run for {context['ds']}",
-        "ip_address": "internal",
-        "timestamp":  datetime.utcnow().isoformat(),
-    }]
-    client.insert_rows_json(
-        f"{PROJECT_ID}.risklens_catalog.access_log", rows
-    )
+    # Set up Cloud Logging inside the callable (runs in Airflow worker context)
+    try:
+        import google.cloud.logging as _cloud_logging
+        _cloud_logging.Client().setup_logging(log_level=logging.INFO)
+    except Exception:
+        logging.basicConfig(level=logging.INFO)
+    log = logging.getLogger("risklens_pipeline")
+
+    ds = context["ds"]
+    run_id = context.get("run_id", "unknown")
+    log.info("Pipeline run complete: dag=risklens_pipeline date=%s run_id=%s", ds, run_id)
+
+    try:
+        client = bigquery.Client(project=PROJECT_ID)
+        rows = [{
+            "event_id":   str(uuid.uuid4()),
+            "page":       "pipeline",
+            "action":     "dag_run",
+            "detail":     f"risklens_pipeline run for {ds} (run_id={run_id})",
+            "ip_address": "internal",
+            "timestamp":  datetime.utcnow().isoformat(),
+        }]
+        client.insert_rows_json(
+            f"{PROJECT_ID}.risklens_catalog.access_log", rows
+        )
+        log.info("Pipeline audit row written to risklens_catalog.access_log")
+    except Exception as exc:
+        log.warning("Failed to write pipeline audit log to BigQuery: %s", exc)
 
 
 # ── DAG Definition ────────────────────────────────────────────────────────────

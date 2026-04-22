@@ -23,6 +23,7 @@ WORKDIR /app
 # Copy only the packages needed at runtime
 COPY api/       ./api/
 COPY indexing/  ./indexing/
+COPY common/    ./common/
 
 EXPOSE 8000
 
