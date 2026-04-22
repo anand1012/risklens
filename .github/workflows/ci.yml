@@ -108,12 +108,35 @@ jobs:
           docker push ${{ steps.meta.outputs.image }}
           docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT }}/${{ env.AR_REPO }}/frontend:latest
 
+  # ── Sync Spark jobs to GCS ───────────────────────────────────────────────────
+  sync-spark-jobs:
+    name: Sync Spark jobs to GCS
+    runs-on: ubuntu-latest
+    needs: check-gcp
+    if: needs.check-gcp.outputs.ready == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Upload Spark jobs and init script to GCS
+        run: |
+          BUCKET="risklens-raw-${{ env.PROJECT }}"
+          gcloud storage cp ingestion/jobs/*.py          gs://${BUCKET}/jobs/
+          gcloud storage cp ingestion/synthetic/generate.py gs://${BUCKET}/jobs/
+          gcloud storage cp scripts/dataproc_init.sh    gs://${BUCKET}/scripts/
+          echo "Spark jobs synced to gs://${BUCKET}/jobs/"
+
   # ── Deploy to GKE ────────────────────────────────────────────────────────────
   deploy:
     name: Deploy to GKE
     runs-on: ubuntu-latest
-    needs: [build-api, build-frontend]
-    if: needs.build-api.result == 'success' && needs.build-frontend.result == 'success'
+    needs: [build-api, build-frontend, sync-spark-jobs]
+    if: needs.build-api.result == 'success' && needs.build-frontend.result == 'success' && needs.sync-spark-jobs.result == 'success'
     steps:
       - uses: actions/checkout@v4
 
