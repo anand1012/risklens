@@ -130,7 +130,7 @@ def _safe_int(val) -> int | None:
         return None
 
 
-def _rows_from_hist(ticker: str, hist, end_date: datetime) -> list[dict]:
+def _rows_from_hist(ticker: str, hist, end_date: datetime) -> list[dict]:  # noqa
     """Convert a yfinance history DataFrame to a list of row dicts."""
     if hist is None or hist.empty:
         return []
@@ -169,6 +169,7 @@ def fetch_all_tickers_batched(tickers: list[str], start: datetime, end: datetime
     Retries up to max_attempts with exponential backoff (5s → 10s → 20s).
     Returns empty list if all attempts fail (caller handles fallback).
     """
+    log.info(f"→ fetch_all_tickers_batched called: {len(tickers)} tickers, start={start.date()}, end={end.date()}")
     start_str = start.strftime("%Y-%m-%d")
     end_str   = end.strftime("%Y-%m-%d")
 
@@ -251,6 +252,11 @@ def fetch_all_tickers_batched(tickers: list[str], start: datetime, end: datetime
                     else:
                         log.error(f"  {ticker}: all {max_attempts} attempts failed — will use synthetic.")
 
+    fetched = {r["ticker"] for r in all_rows}
+    missing_after = [t for t in tickers if t not in fetched]
+    log.info(f"← fetch_all_tickers_batched done: {len(all_rows)} rows, {len(fetched)} tickers fetched, {len(missing_after)} missing")
+    if missing_after:
+        log.warning(f"  Tickers with no data after all attempts: {missing_after}")
     return all_rows
 
 
@@ -262,6 +268,7 @@ def generate_synthetic_prices(spark: SparkSession, project: str,
     Uses a random-walk with realistic daily volatility per instrument type.
     """
     date_str = trade_date.strftime("%Y-%m-%d")
+    log.info(f"→ generate_synthetic_prices called: date={date_str} tickers={len(tickers)}")
     seed = int(trade_date.strftime("%Y%m%d"))
     random.seed(seed)
     now = datetime.utcnow()
@@ -332,16 +339,18 @@ def generate_synthetic_prices(spark: SparkSession, project: str,
             "trade_date":  date_str,
         })
 
-    log.info(f"  Generated {len(rows)} synthetic price rows for {date_str}")
+    log.info(f"← generate_synthetic_prices done: {len(rows)} synthetic price rows for {date_str}")
     return rows
 
 
 def main():
+    log.info("→ main (bronze_prices) called")
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--bucket",  required=True)
     parser.add_argument("--days",    type=int, default=1)
     args = parser.parse_args()
+    log.info(f"  args: project={args.project} bucket={args.bucket} days={args.days}")
 
     spark = (
         SparkSession.builder
@@ -358,27 +367,35 @@ def main():
              f"from {start_date.date()} to {end_date.date()}")
 
     tickers  = list(INSTRUMENTS.keys())
+    log.debug(f"  Tickers: {tickers}")
     all_rows = fetch_all_tickers_batched(tickers, start_date, end_date)
+    log.info(f"  Yahoo Finance returned {len(all_rows):,} rows")
 
     # Synthetic fallback: if Yahoo Finance completely blocked, generate synthetic prices
     if not all_rows:
         log.warning("Yahoo Finance returned zero rows — activating synthetic price fallback.")
+        synthetic_days = 0
         # Generate for each weekday in the requested range
         current = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
         while current <= end_date.replace(hour=0, minute=0, second=0, microsecond=0):
             if current.weekday() < 5:
-                all_rows.extend(generate_synthetic_prices(spark, args.project, current, tickers))
+                synth = generate_synthetic_prices(spark, args.project, current, tickers)
+                all_rows.extend(synth)
+                synthetic_days += 1
+                log.debug(f"  Synthetic: {len(synth)} rows for {current.date()}")
             current += timedelta(days=1)
+        log.info(f"  Synthetic fallback generated {len(all_rows):,} rows for {synthetic_days} days")
 
     if not all_rows:
         # Should never reach here after synthetic fallback, but guard anyway
         today = datetime.utcnow()
         if today.weekday() < 5:
+            log.error(f"bronze_prices: Zero rows even after synthetic fallback for weekday {today.strftime('%Y-%m-%d')}")
             raise RuntimeError(
                 f"bronze_prices: Zero rows even after synthetic fallback for weekday "
                 f"{today.strftime('%Y-%m-%d')}. Investigate the generator."
             )
-        log.warning("No price data and it's a weekend/holiday — acceptable.")
+        log.warning("No price data and it's a weekend/holiday — acceptable, stopping.")
         spark.stop()
         return
 
@@ -401,7 +418,7 @@ def main():
         .save()
     )
 
-    log.info(f"Done: {row_count:,} rows written to risklens_bronze.prices_r")
+    log.info(f"← main (bronze_prices) done: {row_count:,} rows written to risklens_bronze.prices_r")
     spark.stop()
 
 

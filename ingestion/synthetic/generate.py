@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import random
 import uuid
 from datetime import datetime, timedelta
@@ -23,6 +24,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger("generate")
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -169,6 +172,7 @@ LINEAGE_NODES = [
 # ── Generators ───────────────────────────────────────────────────────────────
 
 def gen_trades(date: datetime, n: int = 2000) -> pd.DataFrame:
+    log.info(f"→ gen_trades called: date={date.date()} n={n}")
     rows = []
     for _ in range(n):
         desk = random.choice(DESKS)
@@ -187,6 +191,7 @@ def gen_trades(date: datetime, n: int = 2000) -> pd.DataFrame:
             "maturity_date":  (date + timedelta(days=random.randint(30, 3650))).strftime("%Y-%m-%d"),
             "ingested_at":    datetime.utcnow().isoformat(),
         })
+    log.info(f"← gen_trades done: date={date.date()} rows={len(rows):,}")
     return pd.DataFrame(rows)
 
 
@@ -206,6 +211,7 @@ def gen_var_es(date: datetime, market_params: dict | None = None) -> pd.DataFram
       Rates          → vol_scalar × (1 + |sofr - 5| / 10)  (rate stress)
       FX/Commodities → vol_scalar
     """
+    log.info(f"→ gen_var_es called: date={date.date()} market_params={market_params}")
     sofr      = (market_params or {}).get("sofr",      5.0)
     vix       = (market_params or {}).get("vix",       20.0)
     hy_spread = (market_params or {}).get("hy_spread", 3.5)
@@ -245,6 +251,7 @@ def gen_var_es(date: datetime, market_params: dict | None = None) -> pd.DataFram
             "trade_date":   date.strftime("%Y-%m-%d"),
             "ingested_at":  datetime.utcnow().isoformat(),
         })
+    log.info(f"← gen_var_es done: date={date.date()} rows={len(rows)} vol_scalar={vix/20.0:.2f}")
     return pd.DataFrame(rows)
 
 
@@ -253,6 +260,7 @@ def gen_pnl_vectors(date: datetime, market_params: dict | None = None) -> pd.Dat
     Generate P&L scenario vectors scaled by market volatility.
     std_pnl ~ vol_scalar × base_std so P&L distributions widen in stress.
     """
+    log.info(f"→ gen_pnl_vectors called: date={date.date()}")
     vix = (market_params or {}).get("vix", 20.0)
     vol_scalar = vix / 20.0
 
@@ -271,10 +279,12 @@ def gen_pnl_vectors(date: datetime, market_params: dict | None = None) -> pd.Dat
             "trade_date":   date.strftime("%Y-%m-%d"),
             "ingested_at":  datetime.utcnow().isoformat(),
         })
+    log.info(f"← gen_pnl_vectors done: date={date.date()} rows={len(rows)} vol_scalar={vol_scalar:.2f}")
     return pd.DataFrame(rows)
 
 
 def gen_pipeline_logs(date: datetime) -> pd.DataFrame:
+    log.info(f"→ gen_pipeline_logs called: date={date.date()}")
     jobs = [
         "bronze_trades_job", "bronze_rates_job", "bronze_prices_job",
         "bronze_synthetic_job", "silver_transform_job", "gold_aggregate_job",
@@ -293,10 +303,13 @@ def gen_pipeline_logs(date: datetime) -> pd.DataFrame:
             "error_msg":    "Null constraint violation on notional_usd" if status == "FAILED" else None,
             "started_at":   (date.replace(hour=6) + timedelta(minutes=random.randint(0, 60))).isoformat(),
         })
+    failed = sum(1 for r in rows if r["status"] == "FAILED")
+    log.info(f"← gen_pipeline_logs done: date={date.date()} rows={len(rows)} failed_jobs={failed}")
     return pd.DataFrame(rows)
 
 
 def gen_ownership() -> pd.DataFrame:
+    log.info(f"→ gen_ownership called: asset_count={len(ASSETS)}")
     rows = []
     for i, asset in enumerate(ASSETS):
         owner = OWNERS[i % len(OWNERS)]
@@ -311,10 +324,13 @@ def gen_ownership() -> pd.DataFrame:
     # Leave 2 assets without owners (to show governance gaps)
     rows[-1]["owner_name"] = None
     rows[-2]["owner_name"] = None
+    unassigned = sum(1 for r in rows if r["owner_name"] is None)
+    log.info(f"← gen_ownership done: rows={len(rows)} unassigned={unassigned}")
     return pd.DataFrame(rows)
 
 
 def gen_quality_scores(date: datetime) -> pd.DataFrame:
+    log.info(f"→ gen_quality_scores called: date={date.date()}")
     rows = []
     for asset in ASSETS:
         null_rate = round(random.uniform(0.0, 0.05), 4)
@@ -327,10 +343,14 @@ def gen_quality_scores(date: datetime) -> pd.DataFrame:
             "duplicate_rate":   round(random.uniform(0.0, 0.01), 4),
             "last_checked":     date.isoformat(),
         })
+    critical_count = sum(1 for r in rows if r["freshness_status"] == "critical")
+    drift_count = sum(1 for r in rows if r["schema_drift"])
+    log.info(f"← gen_quality_scores done: date={date.date()} rows={len(rows)} critical={critical_count} schema_drift={drift_count}")
     return pd.DataFrame(rows)
 
 
 def gen_sla_status(date: datetime) -> pd.DataFrame:
+    log.info(f"→ gen_sla_status called: date={date.date()}")
     rows = []
     for asset in ASSETS:
         expected = date.replace(hour=8, minute=0, second=0)
@@ -345,10 +365,13 @@ def gen_sla_status(date: datetime) -> pd.DataFrame:
             "breach_duration_mins": max(0, delay - 30) if breach else 0,
             "checked_at":           date.isoformat(),
         })
+    breach_count = sum(1 for r in rows if r["breach_flag"])
+    log.info(f"← gen_sla_status done: date={date.date()} rows={len(rows)} breaches={breach_count}")
     return pd.DataFrame(rows)
 
 
 def gen_assets_catalog() -> pd.DataFrame:
+    log.info(f"→ gen_assets_catalog called: asset_count={len(ASSETS)}")
     rows = []
     for asset in ASSETS:
         rows.append({
@@ -364,11 +387,13 @@ def gen_assets_catalog() -> pd.DataFrame:
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
         })
+    log.info(f"← gen_assets_catalog done: rows={len(rows)}")
     return pd.DataFrame(rows)
 
 
 def gen_schema_registry() -> pd.DataFrame:
     """One row per column per asset — column-level metadata for all catalog assets."""
+    log.info("→ gen_schema_registry called")
     # Column definitions per asset_id
     SCHEMAS = {
         "bronze_dtcc_trades": [
@@ -595,11 +620,13 @@ def gen_schema_registry() -> pd.DataFrame:
                 "description":  description,
                 "sample_value": sample_value,
             })
+    log.info(f"← gen_schema_registry done: rows={len(rows)} assets={len(SCHEMAS)}")
     return pd.DataFrame(rows)
 
 
 def gen_desk_registry() -> pd.DataFrame:
     """Desk-level model approval and governance registry (FRTB IMA, BCBS 457 ¶53-65)."""
+    log.info("→ gen_desk_registry called")
     DESK_META = [
         ("rates_desk",   "Rates",       "GIRR",   "Fixed Income",  "James Okafor",  "2024-01-15", 250, 150_000_000),
         ("fx_desk",      "FX",          "FX",     "FX & EM",       "Anita Kovacs",  "2024-01-15", 250, 80_000_000),
@@ -623,10 +650,12 @@ def gen_desk_registry() -> pd.DataFrame:
             "last_reviewed_date": "2026-01-10",
             "created_at":         datetime.utcnow().isoformat(),
         })
+    log.info(f"← gen_desk_registry done: rows={len(rows)}")
     return pd.DataFrame(rows)
 
 
 def gen_lineage() -> tuple[pd.DataFrame, pd.DataFrame]:
+    log.info(f"→ gen_lineage called: nodes={len(LINEAGE_NODES)} edges={len(LINEAGE_EDGES)}")
     # Build lookups so table-type nodes carry their real layer + domain from
     # the ASSETS manifest; source/pipeline nodes fall back to sensible defaults.
     asset_layers  = {a["asset_id"]: a["layer"]  for a in ASSETS}
@@ -646,16 +675,20 @@ def gen_lineage() -> tuple[pd.DataFrame, pd.DataFrame]:
          "created_at":   datetime.utcnow().isoformat()}
         for e in LINEAGE_EDGES
     ])
+    log.info(f"← gen_lineage done: nodes={len(nodes)} edges={len(edges)}")
     return nodes, edges
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    logging.basicConfig(level=logging.INFO)
+    log.info("→ main (generate) called")
     parser = argparse.ArgumentParser()
     parser.add_argument("--days",       type=int, default=30,        help="Number of days of data to generate")
     parser.add_argument("--output-dir", default="/tmp/risklens/synthetic", help="Output directory")
     args = parser.parse_args()
+    log.info(f"  args: days={args.days} output_dir={args.output_dir}")
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -663,48 +696,66 @@ def main():
     end_date   = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     start_date = end_date - timedelta(days=args.days)
 
-    print(f"Generating {args.days} days of synthetic data → {out}")
+    log.info(f"Generating {args.days} days of synthetic data ({start_date.date()} to {end_date.date()}) → {out}")
 
     # Daily data
     all_trades, all_var_es, all_pnl, all_logs, all_quality, all_sla = [], [], [], [], [], []
 
+    processed_days = 0
+    skipped_days = 0
     current = start_date
     while current <= end_date:
         if current.weekday() < 5:   # weekdays only
+            log.debug(f"  Generating daily data for {current.date()}")
             all_trades.append(gen_trades(current))
             all_var_es.append(gen_var_es(current))
             all_pnl.append(gen_pnl_vectors(current))
             all_logs.append(gen_pipeline_logs(current))
             all_quality.append(gen_quality_scores(current))
             all_sla.append(gen_sla_status(current))
+            processed_days += 1
+        else:
+            skipped_days += 1
         current += timedelta(days=1)
 
-    pd.concat(all_trades).to_parquet(out / "trades.parquet",       index=False)
-    pd.concat(all_var_es).to_parquet(out / "var_es.parquet",       index=False)
-    pd.concat(all_pnl).to_parquet(out    / "pnl_vectors.parquet",  index=False)
-    pd.concat(all_logs).to_parquet(out   / "pipeline_logs.parquet",index=False)
-    pd.concat(all_quality).to_parquet(out/ "quality_scores.parquet",index=False)
-    pd.concat(all_sla).to_parquet(out    / "sla_status.parquet",   index=False)
+    log.info(f"  Daily data loop done: processed_days={processed_days} skipped_weekend={skipped_days}")
+
+    trades_df = pd.concat(all_trades)
+    var_es_df = pd.concat(all_var_es)
+    pnl_df    = pd.concat(all_pnl)
+    logs_df   = pd.concat(all_logs)
+    quality_df= pd.concat(all_quality)
+    sla_df    = pd.concat(all_sla)
+
+    log.info(f"  Writing parquet files to {out}")
+    trades_df.to_parquet(out  / "trades.parquet",        index=False)
+    var_es_df.to_parquet(out  / "var_es.parquet",        index=False)
+    pnl_df.to_parquet(out     / "pnl_vectors.parquet",   index=False)
+    logs_df.to_parquet(out    / "pipeline_logs.parquet", index=False)
+    quality_df.to_parquet(out / "quality_scores.parquet",index=False)
+    sla_df.to_parquet(out     / "sla_status.parquet",    index=False)
 
     # Static data
-    gen_ownership().to_parquet(out      / "ownership.parquet",     index=False)
-    gen_assets_catalog().to_parquet(out / "assets.parquet",        index=False)
+    ownership_df = gen_ownership()
+    assets_df    = gen_assets_catalog()
+    ownership_df.to_parquet(out / "ownership.parquet",     index=False)
+    assets_df.to_parquet(out    / "assets.parquet",        index=False)
 
     nodes, edges = gen_lineage()
     nodes.to_parquet(out / "lineage_nodes.parquet", index=False)
     edges.to_parquet(out / "lineage_edges.parquet", index=False)
 
-    print(f"\n  trades.parquet        → {len(pd.concat(all_trades)):,} rows")
-    print(f"  var_es.parquet        → {len(pd.concat(all_var_es)):,} rows")
-    print(f"  pnl_vectors.parquet   → {len(pd.concat(all_pnl)):,} rows")
-    print(f"  pipeline_logs.parquet → {len(pd.concat(all_logs)):,} rows")
-    print(f"  quality_scores.parquet→ {len(pd.concat(all_quality)):,} rows")
-    print(f"  sla_status.parquet    → {len(pd.concat(all_sla)):,} rows")
-    print(f"  ownership.parquet     → {len(gen_ownership()):,} rows")
-    print(f"  assets.parquet        → {len(gen_assets_catalog()):,} rows")
-    print(f"  lineage_nodes.parquet → {len(nodes):,} rows")
-    print(f"  lineage_edges.parquet → {len(edges):,} rows")
-    print(f"\n✓ Synthetic data generation complete.")
+    log.info(f"← main (generate) done:")
+    log.info(f"  trades.parquet        → {len(trades_df):,} rows")
+    log.info(f"  var_es.parquet        → {len(var_es_df):,} rows")
+    log.info(f"  pnl_vectors.parquet   → {len(pnl_df):,} rows")
+    log.info(f"  pipeline_logs.parquet → {len(logs_df):,} rows")
+    log.info(f"  quality_scores.parquet→ {len(quality_df):,} rows")
+    log.info(f"  sla_status.parquet    → {len(sla_df):,} rows")
+    log.info(f"  ownership.parquet     → {len(ownership_df):,} rows")
+    log.info(f"  assets.parquet        → {len(assets_df):,} rows")
+    log.info(f"  lineage_nodes.parquet → {len(nodes):,} rows")
+    log.info(f"  lineage_edges.parquet → {len(edges):,} rows")
 
 
 if __name__ == "__main__":

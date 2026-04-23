@@ -50,6 +50,7 @@ def read_silver(spark: SparkSession, project: str, table: str,
                 trade_date: str | None = None) -> DataFrame | None:
     """Read from cleaned silver layer, optionally filtered by trade_date.
     Returns None if the table does not exist."""
+    log.info(f"→ read_silver called: table={table} trade_date={trade_date}")
     try:
         df = (
             spark.read
@@ -61,11 +62,13 @@ def read_silver(spark: SparkSession, project: str, table: str,
         )
     except Exception as e:
         if "not found" in str(e).lower():
-            log.warning(f"  silver.{table} does not exist — returning None")
+            log.warning(f"  read_silver: silver.{table} does not exist — returning None")
             return None
+        log.error(f"  read_silver: failed to read silver.{table}: {e}", exc_info=True)
         raise
     if trade_date:
         df = df.filter(F.col("trade_date") == trade_date)
+    log.info(f"← read_silver done: table={table}")
     return df
 
 
@@ -73,9 +76,10 @@ def write_silver_enriched(df: DataFrame, project: str, bucket: str,
                           table: str, partition_field: str | None = None,
                           cluster_fields: str | None = None) -> int:
     """Write enriched DataFrame to BigQuery silver layer."""
+    log.info(f"→ write_silver_enriched called: table={table}")
     row_count = df.count()
     if row_count == 0:
-        log.info(f"  risklens_silver.{table}: 0 rows — skipping write")
+        log.warning(f"  write_silver_enriched: risklens_silver.{table}: 0 rows — skipping write")
         return 0
 
     writer = (
@@ -93,7 +97,7 @@ def write_silver_enriched(df: DataFrame, project: str, bucket: str,
     if cluster_fields:
         writer = writer.option("clusteredFields", cluster_fields)
     writer.mode("append").save()
-    log.info(f"  risklens_silver.{table}: {row_count:,} rows written")
+    log.info(f"← write_silver_enriched done: risklens_silver.{table}: {row_count:,} rows written")
     return row_count
 
 
@@ -110,14 +114,14 @@ def enrich_positions(spark: SparkSession, project: str,
       silver.prices  → latest adj_close as mark price (matched by currency)
       silver.rates   → SOFR or DFF as discount rate for PV calculation
     """
-    log.info("Building silver.positions")
+    log.info(f"→ enrich_positions called: trade_date={trade_date}")
 
     trades = read_silver(spark, project, "trades", trade_date)
     prices = read_silver(spark, project, "prices", trade_date)
     rates  = read_silver(spark, project, "rates",  trade_date)
 
     if trades is None or trades.rdd.isEmpty():
-        log.info("  No silver trades — skipping positions.")
+        log.warning(f"  enrich_positions: No silver trades for {trade_date} — skipping positions")
         return 0
 
     # Aggregate trades to asset_class × currency level
@@ -138,6 +142,7 @@ def enrich_positions(spark: SparkSession, project: str,
 
     sofr_rate_val = sofr.collect()[0]["sofr_rate"]
     sofr_rate = float(sofr_rate_val) if sofr_rate_val is not None else 0.05
+    log.debug(f"  enrich_positions: sofr_rate={sofr_rate:.4f}")
 
     enriched = (
         positions
@@ -164,9 +169,11 @@ def enrich_positions(spark: SparkSession, project: str,
         )
     )
 
-    return write_silver_enriched(enriched, project, bucket, "positions",
-                                 partition_field="trade_date",
-                                 cluster_fields="asset_class,currency")
+    n_positions = write_silver_enriched(enriched, project, bucket, "positions",
+                                         partition_field="trade_date",
+                                         cluster_fields="asset_class,currency")
+    log.info(f"← enrich_positions done: trade_date={trade_date} positions_written={n_positions:,}")
+    return n_positions
 
 
 def enrich_risk(spark: SparkSession, project: str,
@@ -186,14 +193,14 @@ def enrich_risk(spark: SparkSession, project: str,
       silver.risk_outputs  → desk-level VaR, ES, P&L distribution params
       silver.rates         → market rates for the same calc_date window
     """
-    log.info("Building silver.risk_enriched")
+    log.info(f"→ enrich_risk called: trade_date={trade_date}")
 
     risk  = read_silver(spark, project, "risk_outputs", trade_date)
     # Read all rates history so we can match any calc_date in risk
     rates = read_silver(spark, project, "rates", None)
 
     if risk is None or risk.rdd.isEmpty():
-        log.info("  No silver risk data — skipping risk_enriched.")
+        log.warning(f"  enrich_risk: No silver risk data for {trade_date} — skipping risk_enriched")
         return 0
 
     # Pivot key rate series to columns, one row per date
@@ -255,20 +262,24 @@ def enrich_risk(spark: SparkSession, project: str,
         )
     )
 
-    return write_silver_enriched(enriched, project, bucket, "risk_enriched",
-                                 partition_field="calc_date",
-                                 cluster_fields="desk")
+    n_enriched = write_silver_enriched(enriched, project, bucket, "risk_enriched",
+                                        partition_field="calc_date",
+                                        cluster_fields="desk")
+    log.info(f"← enrich_risk done: trade_date={trade_date} enriched_written={n_enriched:,}")
+    return n_enriched
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    log.info("→ main (silver_enrich) called")
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--bucket",  required=True)
     parser.add_argument("--date",    default=datetime.utcnow().strftime("%Y-%m-%d"),
                         help="Trade date to process (YYYY-MM-DD)")
     args = parser.parse_args()
+    log.info(f"  args: project={args.project} bucket={args.bucket} date={args.date}")
 
     spark = (
         SparkSession.builder
@@ -281,10 +292,10 @@ def main():
 
     log.info(f"Silver enrich for trade_date={args.date}")
 
-    enrich_positions(spark, args.project, args.bucket, args.date)
-    enrich_risk(spark, args.project, args.bucket, args.date)
+    n_positions = enrich_positions(spark, args.project, args.bucket, args.date)
+    n_enriched  = enrich_risk(spark, args.project, args.bucket, args.date)
 
-    log.info("Silver enrich complete.")
+    log.info(f"← main (silver_enrich) done: trade_date={args.date} positions={n_positions:,} risk_enriched={n_enriched:,}")
     spark.stop()
 
 

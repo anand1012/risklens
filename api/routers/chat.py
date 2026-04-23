@@ -36,13 +36,31 @@ class ChatRequest(BaseModel):
 
 @router.post("")
 async def chat(req: ChatRequest, request: Request):
+    session_id = request.headers.get("x-session-id", "unknown")
+    logger.info(
+        "→ chat called",
+        extra={"json_fields": {
+            "session_id": session_id,
+            "query_preview": req.query[:80],
+            "top_k": req.top_k,
+        }},
+    )
     bm25 = request.app.state.bm25_index
     corpus = request.app.state.bm25_corpus
     bq_client = request.app.state.bq_client
+    logger.debug(
+        "chat: corpus_size=%d, top_k=%d",
+        len(corpus) if corpus else 0, req.top_k,
+    )
 
     _log_query(req.query, request)
 
     async def event_stream():
+        logger.info(
+            "chat: stream started",
+            extra={"json_fields": {"session_id": session_id, "query_preview": req.query[:80]}},
+        )
+        token_count = 0
         try:
             async for chunk in stream_answer(
                 query=req.query,
@@ -53,16 +71,34 @@ async def chat(req: ChatRequest, request: Request):
                 top_k=req.top_k,
                 anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
             ):
+                token_count += 1
                 yield chunk
         except Exception as exc:
-            logger.error("Chat stream failed: %s", exc, exc_info=True)
+            logger.error(
+                "Chat stream failed: %s",
+                exc,
+                exc_info=True,
+                extra={"json_fields": {"session_id": session_id}},
+            )
             yield "data: __done__\n\n"
+        logger.info(
+            "chat: stream ended",
+            extra={"json_fields": {"session_id": session_id, "sse_events_emitted": token_count}},
+        )
 
+    logger.info("← chat: returning StreamingResponse")
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 def _log_query(query: str, request: Request) -> None:
     """Fire-and-forget access log write to BigQuery."""
+    logger.info(
+        "→ _log_query called",
+        extra={"json_fields": {
+            "query_preview": query[:80],
+            "session_id": request.headers.get("x-session-id"),
+        }},
+    )
     try:
         row = {
             "event_id": str(uuid.uuid4()),
@@ -76,5 +112,6 @@ def _log_query(query: str, request: Request) -> None:
         get_client().insert_rows_json(
             f"{project()}.risklens_catalog.access_log", [row]
         )
-    except Exception:
-        pass  # logging is non-critical
+        logger.debug("_log_query: access log row inserted, event_id=%s", row["event_id"])
+    except Exception as exc:
+        logger.warning("_log_query: failed to write access log: %s", exc)

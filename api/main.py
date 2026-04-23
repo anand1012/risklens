@@ -42,6 +42,7 @@ _GCS_BUCKET = os.environ.get("GCS_BUCKET", "risklens-frtb-2026-indexes")
 
 def _init_langsmith() -> None:
     """Enable LangSmith tracing if env vars are present."""
+    logger.info("→ _init_langsmith called")
     if os.environ.get("LANGCHAIN_TRACING_V2", "").lower() != "true":
         logger.info("LangSmith tracing disabled (set LANGCHAIN_TRACING_V2=true to enable)")
         return
@@ -58,25 +59,40 @@ def _init_langsmith() -> None:
         )
     except Exception as e:
         logger.warning("LangSmith init failed: %s", e)
+    logger.info("← _init_langsmith done")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up RiskLens API…")
+    logger.info("→ lifespan startup called", extra={"json_fields": {"gcs_bucket": _GCS_BUCKET}})
     _init_langsmith()
 
+    logger.debug("Initializing BigQuery client")
     app.state.bq_client = get_client()
-    logger.info("BigQuery client ready (project: %s)", app.state.bq_client.project)
+    logger.info(
+        "← BigQuery client ready",
+        extra={"json_fields": {"project": app.state.bq_client.project}},
+    )
 
-    logger.info("Loading BM25 index from gs://%s/indexes/…", _GCS_BUCKET)
+    logger.info(
+        "Loading BM25 index from GCS",
+        extra={"json_fields": {"bucket": _GCS_BUCKET, "path": "indexes/"}},
+    )
     bm25, corpus = load_from_gcs(bucket=_GCS_BUCKET)
     app.state.bm25_index = bm25
     app.state.bm25_corpus = corpus
-    logger.info("BM25 index ready: %d documents", len(corpus))
+    logger.info(
+        "← BM25 index ready",
+        extra={"json_fields": {"doc_count": len(corpus)}},
+    )
+
+    logger.info("Registering middleware: CORSMiddleware, RequestLoggingMiddleware")
+    logger.info("Registering routers: catalog, lineage, governance, risk, search, chat")
+    logger.info("RiskLens API startup complete")
 
     yield
 
-    logger.info("Shutting down RiskLens API.")
+    logger.info("← lifespan shutdown: RiskLens API stopped")
 
 
 app = FastAPI(
@@ -104,7 +120,8 @@ app.include_router(chat.router,       prefix="/api")
 
 @app.get("/health", tags=["meta"])
 def health():
-    return {
-        "status": "ok",
-        "bm25_docs": len(app.state.bm25_corpus) if hasattr(app.state, "bm25_corpus") else 0,
-    }
+    logger.info("→ health called")
+    bm25_docs = len(app.state.bm25_corpus) if hasattr(app.state, "bm25_corpus") else 0
+    result = {"status": "ok", "bm25_docs": bm25_docs}
+    logger.info("← health done", extra={"json_fields": result})
+    return result

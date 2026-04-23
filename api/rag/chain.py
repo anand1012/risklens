@@ -150,6 +150,7 @@ async def _is_relevant(query: str, api_key: str) -> bool:
     Binary relevance check using Haiku.
     Runs concurrently with retrieve() so on-topic queries pay zero extra latency.
     """
+    logger.info("→ _is_relevant called", extra={"json_fields": {"query_preview": query[:80], "model": _HAIKU_MODEL}})
     llm = ChatAnthropic(
         model=_HAIKU_MODEL,
         anthropic_api_key=api_key,
@@ -157,7 +158,9 @@ async def _is_relevant(query: str, api_key: str) -> bool:
     )
     response = await llm.ainvoke([HumanMessage(content=_RELEVANCE_PROMPT + query)])
     text = _extract_text(response.content).strip().upper()
-    return text.startswith("Y")
+    result = text.startswith("Y")
+    logger.info("← _is_relevant done", extra={"json_fields": {"relevant": result, "classifier_response": text[:20]}})
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -167,19 +170,38 @@ async def _is_relevant(query: str, api_key: str) -> bool:
 def _run_bq_query(bq_client: bigquery.Client, project: str, sql: str,
                   max_rows: int = 30) -> str:
     """Execute a read-only BQ query, return results as a plain-text table."""
+    import time as _time
+    logger.info(
+        "→ _run_bq_query called",
+        extra={"json_fields": {"sql_preview": sql.strip()[:500], "max_rows": max_rows}},
+    )
     sql_upper = sql.strip().upper()
     if not (sql_upper.startswith("SELECT") or sql_upper.startswith("WITH")):
+        logger.warning("_run_bq_query rejected non-SELECT query: %.100s", sql.strip())
         return "Error: only SELECT/WITH queries are permitted."
     if "LIMIT" not in sql_upper:
+        logger.debug("_run_bq_query: no LIMIT clause found — appending LIMIT %d", max_rows)
         sql = sql.rstrip("; ") + f" LIMIT {max_rows}"
 
+    t0 = _time.monotonic()
     try:
         rows = list(bq_client.query(sql).result())
     except Exception as exc:
-        logger.warning("BQ query failed: %s", exc)
+        latency_ms = int((_time.monotonic() - t0) * 1000)
+        logger.warning(
+            "BQ query failed after %dms: %s",
+            latency_ms, exc,
+            extra={"json_fields": {"sql_preview": sql.strip()[:500], "latency_ms": latency_ms}},
+        )
         return f"Query error: {exc}"
 
+    latency_ms = int((_time.monotonic() - t0) * 1000)
+
     if not rows:
+        logger.warning(
+            "_run_bq_query returned 0 rows",
+            extra={"json_fields": {"latency_ms": latency_ms, "sql_preview": sql.strip()[:200]}},
+        )
         return "Query returned no rows."
 
     fields = list(rows[0].keys())
@@ -192,6 +214,10 @@ def _run_bq_query(bq_client: bigquery.Client, project: str, sql: str,
     result = f"{header}\n{sep}\n{body}"
     if len(rows) >= max_rows:
         result += f"\n({max_rows} rows shown)"
+    logger.info(
+        "← _run_bq_query done",
+        extra={"json_fields": {"row_count": len(rows), "latency_ms": latency_ms, "col_count": len(fields)}},
+    )
     return result
 
 
@@ -200,13 +226,18 @@ def _run_bq_query(bq_client: bigquery.Client, project: str, sql: str,
 # ---------------------------------------------------------------------------
 
 def _build_context_block(docs: list[RetrievedDoc]) -> str:
+    logger.debug("→ _build_context_block called", extra={"json_fields": {"doc_count": len(docs)}})
     parts = []
     for i, doc in enumerate(docs, start=1):
+        logger.debug("  doc[%d]: chunk_id=%s source_type=%s domain=%s score=%.4f", i, doc.chunk_id, doc.source_type, doc.domain, doc.score)
         parts.append(f"[{i}] ({doc.source_type} | {doc.domain})\n{doc.text}")
-    return "\n\n---\n\n".join(parts)
+    result = "\n\n---\n\n".join(parts)
+    logger.debug("← _build_context_block done", extra={"json_fields": {"context_length": len(result)}})
+    return result
 
 
 def _sources_payload(docs: list[RetrievedDoc]) -> str:
+    logger.debug("→ _sources_payload called", extra={"json_fields": {"doc_count": len(docs)}})
     sources = [
         {
             "chunk_id": d.chunk_id,
@@ -218,7 +249,9 @@ def _sources_payload(docs: list[RetrievedDoc]) -> str:
         }
         for d in docs
     ]
-    return json.dumps(sources)
+    payload = json.dumps(sources)
+    logger.debug("← _sources_payload done", extra={"json_fields": {"source_count": len(sources)}})
+    return payload
 
 
 def _extract_text(content) -> str:
@@ -242,14 +275,18 @@ async def _fallback_answer(messages, ant_key: str, run_cfg: dict):
     Async generator: yields a single SSE token from a plain (no-tool) ainvoke.
     Used when Phase 1 streaming or chunk-merge fails and no text was yielded yet.
     """
+    logger.info("→ _fallback_answer called", extra={"json_fields": {"message_count": len(messages)}})
     llm = ChatAnthropic(model=_MODEL, anthropic_api_key=ant_key, max_tokens=1024)
     try:
         resp = await llm.ainvoke(messages, config=run_cfg)
         text = _extract_text(resp.content)
         if text:
+            logger.info("← _fallback_answer yielding text", extra={"json_fields": {"text_length": len(text)}})
             yield f"data: {json.dumps(text)}\n\n"
+        else:
+            logger.warning("_fallback_answer produced empty text")
     except Exception as exc:
-        logger.error("Fallback invocation failed: %s", exc)
+        logger.error("Fallback invocation failed: %s", exc, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -272,10 +309,16 @@ async def stream_answer(
     Relevance check runs in parallel with retrieval — no latency overhead
     for on-topic queries.
     """
+    logger.info(
+        "→ stream_answer called",
+        extra={"json_fields": {"query_preview": query[:80], "top_k": top_k}},
+    )
     ant_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not ant_key:
+        logger.error("ANTHROPIC_API_KEY not set — cannot stream answer")
         raise ValueError("ANTHROPIC_API_KEY not set")
 
+    logger.debug("Launching parallel relevance check + retrieval")
     # Run relevance classifier and retrieval concurrently
     relevant, docs = await asyncio.gather(
         _is_relevant(query, ant_key),
@@ -289,8 +332,13 @@ async def stream_answer(
             top_k=top_k,
         ),
     )
+    logger.info(
+        "Parallel gather complete",
+        extra={"json_fields": {"relevant": relevant, "retrieved_doc_count": len(docs)}},
+    )
 
     if not relevant:
+        logger.info("Query classified off-topic — returning decline message")
         yield f"data: __sources__{json.dumps([])}\n\n"
         yield f"data: {json.dumps(_DECLINE_MESSAGE)}\n\n"
         yield "data: __done__\n\n"
@@ -310,6 +358,7 @@ async def stream_answer(
     )
     llm_with_tools = llm.bind_tools([_BQ_TOOL_DEF])
 
+    logger.debug("Emitting sources payload for %d docs", len(docs))
     yield f"data: __sources__{_sources_payload(docs)}\n\n"
 
     run_cfg = {
@@ -322,6 +371,7 @@ async def stream_answer(
     )
 
     # ── Phase 1: stream with tools ────────────────────────────────────────────
+    logger.info("Starting Phase 1 streaming with tools", extra={"json_fields": {"model": _MODEL}})
     chunks: list = []
     text_yielded = False
 
@@ -341,9 +391,14 @@ async def stream_answer(
             if token:
                 text_yielded = True
                 yield f"data: {json.dumps(token)}\n\n"
+        logger.info(
+            "Phase 1 stream complete",
+            extra={"json_fields": {"chunk_count": len(chunks), "text_yielded": text_yielded}},
+        )
     except Exception as exc:
         logger.error("Phase 1 stream error: %s", exc, exc_info=True)
         if not text_yielded:
+            logger.warning("Phase 1 yielded nothing — activating fallback")
             async for tok in _fallback_answer(messages, ant_key, run_cfg):
                 yield tok
         yield "data: __done__\n\n"
@@ -365,15 +420,22 @@ async def stream_answer(
         if tool_calls:
             tc = tool_calls[0]
             sql = tc.get("args", {}).get("sql", "")
-            logger.info("BQ tool call — sql: %.300s", sql)
+            logger.info(
+                "BQ tool call detected",
+                extra={"json_fields": {"sql_preview": sql[:300], "tool_call_id": tc.get("id")}},
+            )
 
             tool_result = _run_bq_query(bq_client, project, sql)
-            logger.info("BQ result preview: %.200s", tool_result[:200])
+            logger.info(
+                "BQ tool result ready",
+                extra={"json_fields": {"result_preview": tool_result[:200]}},
+            )
 
             follow_up = messages + [
                 full_msg,
                 ToolMessage(content=tool_result, tool_call_id=tc["id"]),
             ]
+            logger.info("Starting Phase 2 streaming (continuation after tool call)")
             phase2_yielded = False
             try:
                 async for chunk in plain_llm.astream(follow_up, config=run_cfg):
@@ -390,6 +452,7 @@ async def stream_answer(
                     if token:
                         phase2_yielded = True
                         yield f"data: {json.dumps(token)}\n\n"
+                logger.info("Phase 2 stream complete", extra={"json_fields": {"phase2_yielded": phase2_yielded}})
             except Exception as exc:
                 logger.error("Phase 2 stream error: %s", exc, exc_info=True)
 
@@ -404,7 +467,10 @@ async def stream_answer(
                 ]
                 async for tok in _fallback_answer(fallback_msgs, ant_key, run_cfg):
                     yield tok
+        else:
+            logger.debug("No tool calls in Phase 1 response — no Phase 2 needed")
 
+    logger.info("← stream_answer done", extra={"json_fields": {"query_preview": query[:80]}})
     yield "data: __done__\n\n"
 
 
@@ -422,10 +488,16 @@ async def answer(
     anthropic_api_key: Optional[str] = None,
 ) -> dict:
     """Returns {"answer": str, "sources": list[dict], "relevant": bool}"""
+    logger.info(
+        "→ answer called",
+        extra={"json_fields": {"query_preview": query[:80], "top_k": top_k}},
+    )
     ant_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not ant_key:
+        logger.error("ANTHROPIC_API_KEY not set — cannot answer")
         raise ValueError("ANTHROPIC_API_KEY not set")
 
+    logger.debug("Launching parallel relevance check + retrieval for non-streaming answer")
     # Run relevance classifier and retrieval concurrently
     relevant, docs = await asyncio.gather(
         _is_relevant(query, ant_key),
@@ -439,8 +511,13 @@ async def answer(
             top_k=top_k,
         ),
     )
+    logger.info(
+        "Parallel gather complete (non-streaming)",
+        extra={"json_fields": {"relevant": relevant, "retrieved_doc_count": len(docs)}},
+    )
 
     if not relevant:
+        logger.info("Query classified off-topic — returning decline")
         return {"answer": _DECLINE_MESSAGE, "sources": [], "relevant": False}
 
     context_block = _build_context_block(docs)
@@ -453,8 +530,10 @@ async def answer(
     llm = ChatAnthropic(model=_MODEL, anthropic_api_key=ant_key, max_tokens=1024)
     llm_with_tools = llm.bind_tools([_BQ_TOOL_DEF])
 
+    logger.debug("Invoking LLM (non-streaming) with %d messages", len(messages))
     response = await llm_with_tools.ainvoke(messages)
     content = _extract_text(response.content)
+    logger.debug("LLM response length: %d chars", len(content))
 
     sources = [
         {
@@ -472,12 +551,26 @@ async def answer(
     if tool_calls:
         tc = tool_calls[0]
         sql = tc.get("args", {}).get("sql", "")
+        logger.info(
+            "BQ tool call in non-streaming answer",
+            extra={"json_fields": {"sql_preview": sql[:300]}},
+        )
         tool_result = _run_bq_query(bq_client, project, sql)
         follow_up = messages + [
             response,
             ToolMessage(content=tool_result, tool_call_id=tc["id"]),
         ]
+        logger.debug("Invoking LLM for Phase 2 continuation (non-streaming)")
         final = await llm.ainvoke(follow_up)
-        return {"answer": _extract_text(final.content), "sources": sources, "relevant": True}
+        final_text = _extract_text(final.content)
+        logger.info(
+            "← answer done (with tool call)",
+            extra={"json_fields": {"answer_length": len(final_text), "source_count": len(sources)}},
+        )
+        return {"answer": final_text, "sources": sources, "relevant": True}
 
+    logger.info(
+        "← answer done (no tool call)",
+        extra={"json_fields": {"answer_length": len(content), "source_count": len(sources)}},
+    )
     return {"answer": content, "sources": sources, "relevant": True}

@@ -42,6 +42,7 @@ def _chunk_id(text: str) -> str:
 
 def _chunk_catalog_assets(client: bigquery.Client, project: str) -> list[ChunkDoc]:
     """One chunk per catalog asset — name, type, domain, layer, description, tags."""
+    logger.info("→ _chunk_catalog_assets called", extra={"json_fields": {"project": project}})
     query = f"""
         SELECT
             a.asset_id,
@@ -57,6 +58,7 @@ def _chunk_catalog_assets(client: bigquery.Client, project: str) -> list[ChunkDo
         LEFT JOIN `{project}.risklens_catalog.ownership` o USING (asset_id)
     """
     rows = list(client.query(query).result())
+    logger.debug("_chunk_catalog_assets: query returned %d asset rows", len(rows))
     chunks: list[ChunkDoc] = []
 
     for row in rows:
@@ -85,12 +87,18 @@ def _chunk_catalog_assets(client: bigquery.Client, project: str) -> list[ChunkDo
             },
         ))
 
-    logger.info("  catalog assets → %d chunks", len(chunks))
+    logger.info(
+        "← _chunk_catalog_assets done",
+        extra={"json_fields": {"chunk_count": len(chunks)}},
+    )
+    if not chunks:
+        logger.warning("_chunk_catalog_assets produced 0 chunks — is risklens_catalog.assets populated?")
     return chunks
 
 
 def _chunk_schema_registry(client: bigquery.Client, project: str) -> list[ChunkDoc]:
     """One chunk per table — all columns collapsed into a single schema narrative."""
+    logger.info("→ _chunk_schema_registry called", extra={"json_fields": {"project": project}})
     query = f"""
         SELECT
             sr.asset_id,
@@ -106,6 +114,7 @@ def _chunk_schema_registry(client: bigquery.Client, project: str) -> list[ChunkD
         GROUP BY sr.asset_id, a.name, a.domain, a.layer
     """
     rows = list(client.query(query).result())
+    logger.debug("_chunk_schema_registry: query returned %d table rows", len(rows))
     chunks: list[ChunkDoc] = []
 
     for row in rows:
@@ -126,6 +135,8 @@ def _chunk_schema_registry(client: bigquery.Client, project: str) -> list[ChunkD
             f"Domain: {row.domain or 'unknown'} | Layer: {row.layer or 'unknown'}\n"
             f"Columns:\n{columns_text}"
         )
+        col_count = len(row.columns)
+        logger.debug("_chunk_schema_registry: asset=%s columns=%d", row.asset_id, col_count)
         chunks.append(ChunkDoc(
             chunk_id=_chunk_id(text),
             asset_id=row.asset_id,
@@ -134,16 +145,22 @@ def _chunk_schema_registry(client: bigquery.Client, project: str) -> list[ChunkD
             domain=row.domain or "unknown",
             metadata={
                 "asset_name": row.asset_name,
-                "column_count": len(row.columns),
+                "column_count": col_count,
             },
         ))
 
-    logger.info("  schema registry → %d chunks", len(chunks))
+    logger.info(
+        "← _chunk_schema_registry done",
+        extra={"json_fields": {"chunk_count": len(chunks)}},
+    )
+    if not chunks:
+        logger.warning("_chunk_schema_registry produced 0 chunks")
     return chunks
 
 
 def _chunk_lineage(client: bigquery.Client, project: str) -> list[ChunkDoc]:
     """One chunk per lineage node augmented with its upstream/downstream edges."""
+    logger.info("→ _chunk_lineage called", extra={"json_fields": {"project": project}})
     nodes_query = f"""
         SELECT node_id, name, type, domain, layer, metadata
         FROM `{project}.risklens_lineage.nodes`
@@ -155,6 +172,7 @@ def _chunk_lineage(client: bigquery.Client, project: str) -> list[ChunkDoc]:
 
     nodes = {row.node_id: row for row in client.query(nodes_query).result()}
     edges = list(client.query(edges_query).result())
+    logger.debug("_chunk_lineage: loaded %d nodes and %d edges", len(nodes), len(edges))
 
     # Build adjacency: upstream (in-edges) and downstream (out-edges) per node
     upstream: dict[str, list[str]] = {nid: [] for nid in nodes}
@@ -214,7 +232,12 @@ def _chunk_lineage(client: bigquery.Client, project: str) -> list[ChunkDoc]:
             },
         ))
 
-    logger.info("  lineage nodes → %d chunks", len(chunks))
+    logger.info(
+        "← _chunk_lineage done",
+        extra={"json_fields": {"chunk_count": len(chunks), "node_count": len(nodes), "edge_count": len(edges)}},
+    )
+    if not chunks:
+        logger.warning("_chunk_lineage produced 0 chunks")
     return chunks
 
 
@@ -224,21 +247,46 @@ def _chunk_lineage(client: bigquery.Client, project: str) -> list[ChunkDoc]:
 
 def build_chunks(project: str) -> list[ChunkDoc]:
     """Pull all BigQuery metadata and return the full corpus of ChunkDocs."""
+    logger.info("→ build_chunks called", extra={"json_fields": {"project": project}})
     client = bigquery.Client(project=project)
     logger.info("Building document corpus from BigQuery project: %s", project)
 
     chunks: list[ChunkDoc] = []
-    chunks.extend(_chunk_catalog_assets(client, project))
-    chunks.extend(_chunk_schema_registry(client, project))
-    chunks.extend(_chunk_lineage(client, project))
+
+    catalog_chunks = _chunk_catalog_assets(client, project)
+    chunks.extend(catalog_chunks)
+    logger.debug("build_chunks: after catalog assets: %d chunks total", len(chunks))
+
+    schema_chunks = _chunk_schema_registry(client, project)
+    chunks.extend(schema_chunks)
+    logger.debug("build_chunks: after schema registry: %d chunks total", len(chunks))
+
+    lineage_chunks = _chunk_lineage(client, project)
+    chunks.extend(lineage_chunks)
+    logger.debug("build_chunks: after lineage: %d chunks total", len(chunks))
 
     # Deduplicate by chunk_id (same text from multiple sources)
     seen: set[str] = set()
     unique: list[ChunkDoc] = []
+    dupes = 0
     for c in chunks:
         if c.chunk_id not in seen:
             seen.add(c.chunk_id)
             unique.append(c)
+        else:
+            dupes += 1
 
-    logger.info("Total unique chunks: %d", len(unique))
+    if dupes:
+        logger.warning("build_chunks: deduplicated %d duplicate chunks", dupes)
+    logger.info(
+        "← build_chunks done",
+        extra={"json_fields": {
+            "total_before_dedup": len(chunks),
+            "unique_chunks": len(unique),
+            "duplicates_removed": dupes,
+            "catalog_chunks": len(catalog_chunks),
+            "schema_chunks": len(schema_chunks),
+            "lineage_chunks": len(lineage_chunks),
+        }},
+    )
     return unique

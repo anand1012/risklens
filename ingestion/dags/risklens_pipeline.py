@@ -82,6 +82,7 @@ CLUSTER_CONFIG = {
 
 def make_pyspark_job(script: str, extra_args: list[str] | None = None) -> dict:
     """Build a Dataproc PySpark job definition."""
+    log.debug(f"→ make_pyspark_job called: script={script} extra_args={extra_args}")
     args = [
         f"--project={PROJECT_ID}",
         f"--bucket={BUCKET}",
@@ -90,7 +91,7 @@ def make_pyspark_job(script: str, extra_args: list[str] | None = None) -> dict:
     if extra_args:
         args.extend(extra_args)
 
-    return {
+    job = {
         "reference":  {"project_id": PROJECT_ID},
         "placement":  {"cluster_name": CLUSTER_NAME},
         "pyspark_job": {
@@ -104,10 +105,13 @@ def make_pyspark_job(script: str, extra_args: list[str] | None = None) -> dict:
             },
         },
     }
+    log.debug(f"← make_pyspark_job done: script={script} args={args}")
+    return job
 
 
 def make_silver_job() -> dict:
     """Silver job uses --date instead of --days."""
+    log.debug("→ make_silver_job called")
     return {
         "reference":  {"project_id": PROJECT_ID},
         "placement":  {"cluster_name": CLUSTER_NAME},
@@ -130,6 +134,7 @@ def make_silver_job() -> dict:
 
 def make_silver_enrich_job() -> dict:
     """Silver enrich job: joins risk_outputs × rates → risk_enriched."""
+    log.debug("→ make_silver_enrich_job called")
     return {
         "reference":  {"project_id": PROJECT_ID},
         "placement":  {"cluster_name": CLUSTER_NAME},
@@ -151,6 +156,7 @@ def make_silver_enrich_job() -> dict:
 
 
 def make_gold_job() -> dict:
+    log.debug("→ make_gold_job called")
     return {
         "reference":  {"project_id": PROJECT_ID},
         "placement":  {"cluster_name": CLUSTER_NAME},
@@ -180,31 +186,36 @@ def log_pipeline_run(**context):
     # Set up Cloud Logging inside the callable (runs in Airflow worker context)
     try:
         import google.cloud.logging as _cloud_logging
-        _cloud_logging.Client().setup_logging(log_level=logging.INFO)
+        _cloud_logging.Client().setup_logging(
+            log_level=logging.INFO,
+            labels={"app": "risklens", "service": "ingestion", "layer": "orchestration", "job": "risklens_pipeline"},
+        )
     except Exception:
         logging.basicConfig(level=logging.INFO)
     log = logging.getLogger("risklens_pipeline")
 
     ds = context["ds"]
     run_id = context.get("run_id", "unknown")
-    log.info("Pipeline run complete: dag=risklens_pipeline date=%s run_id=%s", ds, run_id)
+    log.info("→ log_pipeline_run called: dag=risklens_pipeline date=%s run_id=%s", ds, run_id)
 
     try:
         client = bigquery.Client(project=PROJECT_ID)
+        event_id = str(uuid.uuid4())
         rows = [{
-            "event_id":   str(uuid.uuid4()),
+            "event_id":   event_id,
             "page":       "pipeline",
             "action":     "dag_run",
             "detail":     f"risklens_pipeline run for {ds} (run_id={run_id})",
             "ip_address": "internal",
             "timestamp":  datetime.utcnow().isoformat(),
         }]
+        log.info("Writing pipeline audit row: event_id=%s date=%s run_id=%s", event_id, ds, run_id)
         client.insert_rows_json(
             f"{PROJECT_ID}.risklens_catalog.access_log", rows
         )
-        log.info("Pipeline audit row written to risklens_catalog.access_log")
+        log.info("← log_pipeline_run done: audit row written to risklens_catalog.access_log event_id=%s", event_id)
     except Exception as exc:
-        log.warning("Failed to write pipeline audit log to BigQuery: %s", exc)
+        log.warning("log_pipeline_run: Failed to write pipeline audit log to BigQuery: %s", exc, exc_info=True)
 
 
 # ── DAG Definition ────────────────────────────────────────────────────────────

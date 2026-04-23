@@ -5,11 +5,14 @@ GET /lineage/nodes                   all lineage nodes
 GET /lineage/graph/{asset_id}        subgraph centered on an asset (N hops upstream+downstream)
 """
 
+import logging
+
 from fastapi import APIRouter, Query
 
 from api.db.bigquery import query_rows, project
 
 router = APIRouter(prefix="/lineage", tags=["lineage"])
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Business transformation stories per edge (from_node_id, to_node_id)
@@ -226,12 +229,17 @@ def list_nodes(
     layer: str | None = Query(None),
     limit: int = Query(200, le=1000),
 ):
+    logger.info(
+        "→ list_nodes called",
+        extra={"json_fields": {"domain": domain, "layer": layer, "limit": limit}},
+    )
     filters = ["1=1"]
     if domain:
         filters.append(f"domain = '{domain}'")
     if layer:
         filters.append(f"layer = '{layer}'")
     where = " AND ".join(filters)
+    logger.debug("list_nodes WHERE: %s", where)
 
     sql = f"""
         SELECT node_id, name, type, domain, layer, metadata
@@ -240,7 +248,14 @@ def list_nodes(
         ORDER BY domain, layer, name
         LIMIT {limit}
     """
-    return query_rows(sql)
+    rows = query_rows(sql)
+    logger.info(
+        "← list_nodes done",
+        extra={"json_fields": {"node_count": len(rows), "domain": domain, "layer": layer}},
+    )
+    if not rows:
+        logger.warning("list_nodes returned 0 nodes", extra={"json_fields": {"domain": domain, "layer": layer}})
+    return rows
 
 
 @router.get("/graph/{asset_id}")
@@ -256,6 +271,10 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
     404 that the UI renders as a red error (I-10), we return an empty graph
     with `meta_asset: true` so the frontend can show a neutral empty-state.
     """
+    logger.info(
+        "→ get_lineage_graph called",
+        extra={"json_fields": {"asset_id": asset_id, "hops": hops}},
+    )
     # Seed node IDs — start from the requested asset
     # We iteratively expand via edges up to `hops` levels
     seed_sql = f"""
@@ -263,9 +282,11 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
         WHERE node_id = '{asset_id}'
     """
     seeds = [r["node_id"] for r in query_rows(seed_sql)]
+    logger.debug("get_lineage_graph: seed lookup returned %d nodes for asset_id=%s", len(seeds), asset_id)
     if not seeds:
         # Is this a registered governance/meta asset? If so, return an empty
         # graph instead of 404 so the UI can show a friendly message.
+        logger.debug("get_lineage_graph: no lineage node found — checking catalog for meta_asset")
         meta_sql = f"""
             SELECT asset_id, name, layer
             FROM `{project()}.risklens_catalog.assets`
@@ -273,6 +294,10 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
         """
         meta_row = query_rows(meta_sql)
         if meta_row:
+            logger.info(
+                "get_lineage_graph: meta_asset detected — returning empty graph",
+                extra={"json_fields": {"asset_id": asset_id, "layer": meta_row[0]["layer"]}},
+            )
             return {
                 "root_id": asset_id,
                 "hops": hops,
@@ -282,14 +307,16 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
                 "meta_asset_name": meta_row[0]["name"],
                 "meta_asset_layer": meta_row[0]["layer"],
             }
+        logger.warning("get_lineage_graph: node not found", extra={"json_fields": {"asset_id": asset_id}})
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Node '{asset_id}' not found")
 
     visited: set[str] = set(seeds)
     frontier: set[str] = set(seeds)
 
-    for _ in range(hops):
+    for hop in range(hops):
         if not frontier:
+            logger.debug("get_lineage_graph: frontier empty at hop %d — stopping expansion", hop)
             break
         ids = ", ".join(f"'{n}'" for n in frontier)
         expansion_sql = f"""
@@ -299,9 +326,11 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
             WHERE from_node_id IN ({ids}) OR to_node_id IN ({ids})
         """
         neighbors = {r["neighbor"] for r in query_rows(expansion_sql)} - visited
+        logger.debug("get_lineage_graph: hop %d expanded %d new neighbors", hop + 1, len(neighbors))
         visited.update(neighbors)
         frontier = neighbors
 
+    logger.debug("get_lineage_graph: total visited nodes after %d hops: %d", hops, len(visited))
     all_ids = ", ".join(f"'{n}'" for n in visited)
 
     nodes_sql = f"""
@@ -315,14 +344,28 @@ def get_lineage_graph(asset_id: str, hops: int = Query(2, ge=1, le=4)):
         WHERE from_node_id IN ({all_ids}) AND to_node_id IN ({all_ids})
     """
 
+    raw_nodes = query_rows(nodes_sql)
     raw_edges = query_rows(edges_sql)
+    story_hits = 0
     for e in raw_edges:
         key = (e["from_node_id"], e["to_node_id"])
         e["story"] = EDGE_STORIES.get(key)
+        if e["story"]:
+            story_hits += 1
 
+    logger.info(
+        "← get_lineage_graph done",
+        extra={"json_fields": {
+            "asset_id": asset_id,
+            "hops": hops,
+            "node_count": len(raw_nodes),
+            "edge_count": len(raw_edges),
+            "story_hits": story_hits,
+        }},
+    )
     return {
         "root_id": asset_id,
         "hops": hops,
-        "nodes": query_rows(nodes_sql),
+        "nodes": raw_nodes,
         "edges": raw_edges,
     }

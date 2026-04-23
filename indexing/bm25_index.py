@@ -21,6 +21,7 @@ import io
 import logging
 import pickle
 import re
+import time
 from typing import Optional
 
 from google.cloud import storage
@@ -65,19 +66,45 @@ def build_and_save(
     Returns:
         The in-memory BM25Okapi index
     """
+    logger.info(
+        "→ build_and_save called",
+        extra={"json_fields": {"chunk_count": len(chunks), "bucket": bucket}},
+    )
     gcs = gcs_client or storage.Client()
 
+    logger.debug("Tokenizing %d chunks for BM25 index", len(chunks))
+    t0 = time.monotonic()
     tokenized = [_tokenize(c.text) for c in chunks]
-    logger.info("Building BM25 index over %d documents…", len(chunks))
-    bm25 = BM25Okapi(tokenized)
+    tokenize_ms = int((time.monotonic() - t0) * 1000)
+    logger.debug("Tokenization done in %dms", tokenize_ms)
 
-    _upload_pickle(gcs, bucket, _CORPUS_BLOB, chunks)
-    _upload_pickle(gcs, bucket, _INDEX_BLOB, bm25)
+    vocab: set[str] = set()
+    for toks in tokenized:
+        vocab.update(toks)
+    logger.info(
+        "Building BM25 index",
+        extra={"json_fields": {"doc_count": len(chunks), "vocab_size": len(vocab)}},
+    )
+
+    t_build = time.monotonic()
+    bm25 = BM25Okapi(tokenized)
+    build_ms = int((time.monotonic() - t_build) * 1000)
+    logger.info("BM25Okapi built in %dms", build_ms)
+
+    logger.info("Uploading corpus pickle to GCS: %s", _CORPUS_BLOB)
+    corpus_size = _upload_pickle(gcs, bucket, _CORPUS_BLOB, chunks)
+    logger.info("Uploading index pickle to GCS: %s", _INDEX_BLOB)
+    index_size = _upload_pickle(gcs, bucket, _INDEX_BLOB, bm25)
 
     logger.info(
-        "BM25 index saved → gs://%s/%s and gs://%s/%s",
-        bucket, _CORPUS_BLOB,
-        bucket, _INDEX_BLOB,
+        "← build_and_save done",
+        extra={"json_fields": {
+            "bucket": bucket,
+            "corpus_bytes": corpus_size,
+            "index_bytes": index_size,
+            "doc_count": len(chunks),
+            "vocab_size": len(vocab),
+        }},
     )
     return bm25
 
@@ -87,19 +114,28 @@ def _upload_pickle(
     bucket_name: str,
     blob_name: str,
     obj: object,
-) -> None:
+) -> int:
+    """Upload pickled object to GCS. Returns uploaded byte count."""
+    logger.debug("→ _upload_pickle: bucket=%s blob=%s", bucket_name, blob_name)
     bucket = gcs.bucket(bucket_name)
     if not bucket.exists():
+        logger.info("GCS bucket %s does not exist — creating", bucket_name)
         bucket.create(location="US")
         logger.info("Created GCS bucket: %s", bucket_name)
 
     buf = io.BytesIO()
     pickle.dump(obj, buf)
     buf.seek(0)
+    size = buf.getbuffer().nbytes
 
     blob = bucket.blob(blob_name)
     blob.upload_from_file(buf, content_type="application/octet-stream")
-    logger.info("Uploaded %s (%d bytes)", blob_name, buf.tell())
+    logger.info(
+        "← _upload_pickle done: %s (%d bytes)",
+        blob_name, size,
+        extra={"json_fields": {"blob_name": blob_name, "size_bytes": size}},
+    )
+    return size
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +153,28 @@ def load_from_gcs(
     Returns:
         (bm25_index, corpus)
     """
+    logger.info(
+        "→ load_from_gcs called",
+        extra={"json_fields": {"bucket": bucket}},
+    )
     gcs = gcs_client or storage.Client()
+
+    logger.debug("Downloading corpus pickle from GCS: %s", _CORPUS_BLOB)
+    t0 = time.monotonic()
     corpus: list[ChunkDoc] = _download_pickle(gcs, bucket, _CORPUS_BLOB)
+    corpus_ms = int((time.monotonic() - t0) * 1000)
+    logger.debug("Corpus downloaded in %dms: %d docs", corpus_ms, len(corpus))
+
+    logger.debug("Downloading index pickle from GCS: %s", _INDEX_BLOB)
+    t1 = time.monotonic()
     bm25: BM25Okapi = _download_pickle(gcs, bucket, _INDEX_BLOB)
-    logger.info("BM25 index loaded: %d documents", len(corpus))
+    index_ms = int((time.monotonic() - t1) * 1000)
+    logger.debug("Index downloaded in %dms", index_ms)
+
+    logger.info(
+        "← load_from_gcs done",
+        extra={"json_fields": {"doc_count": len(corpus), "corpus_ms": corpus_ms, "index_ms": index_ms}},
+    )
     return bm25, corpus
 
 
@@ -129,9 +183,11 @@ def _download_pickle(
     bucket_name: str,
     blob_name: str,
 ) -> object:
+    logger.debug("→ _download_pickle: bucket=%s blob=%s", bucket_name, blob_name)
     bucket = gcs.bucket(bucket_name)
     blob = bucket.blob(blob_name)
     data = blob.download_as_bytes()
+    logger.debug("← _download_pickle: downloaded %d bytes for %s", len(data), blob_name)
     return pickle.loads(data)
 
 
@@ -151,7 +207,19 @@ def search(
     Returns:
         List of (ChunkDoc, score) sorted by descending score, length top_k.
     """
+    logger.debug(
+        "→ search called",
+        extra={"json_fields": {"query_preview": query[:80], "top_k": top_k, "corpus_size": len(corpus)}},
+    )
     tokens = _tokenize(query)
+    logger.debug("search: tokenized query → %d tokens: %s", len(tokens), tokens[:10])
     scores = bm25.get_scores(tokens)
     top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
-    return [(corpus[i], float(scores[i])) for i in top_indices if scores[i] > 0]
+    results = [(corpus[i], float(scores[i])) for i in top_indices if scores[i] > 0]
+    logger.debug(
+        "← search done",
+        extra={"json_fields": {"hit_count": len(results), "top_score": round(results[0][1], 4) if results else None}},
+    )
+    if not results:
+        logger.warning("BM25 search returned 0 hits for query: %.80s", query)
+    return results

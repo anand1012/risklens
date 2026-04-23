@@ -87,14 +87,22 @@ BRONZE_SCHEMA = StructType([
 
 def get_fred_api_key(project: str) -> str:
     """Fetch FRED API key from GCP Secret Manager."""
+    log.info(f"→ get_fred_api_key called: project={project}")
     client = secretmanager.SecretManagerServiceClient()
     name   = f"projects/{project}/secrets/risklens-fred-api-key/versions/latest"
-    resp   = client.access_secret_version(request={"name": name})
-    return resp.payload.data.decode("utf-8").strip()
+    try:
+        resp   = client.access_secret_version(request={"name": name})
+        key = resp.payload.data.decode("utf-8").strip()
+        log.info("← get_fred_api_key done: key retrieved (length=%d)", len(key))
+        return key
+    except Exception as e:
+        log.error(f"get_fred_api_key: failed to retrieve key: {e}", exc_info=True)
+        raise
 
 
 def fetch_series(fred: Fred, series_id: str, start_date: datetime, end_date: datetime) -> list[dict]:
     """Fetch a single FRED series and return as list of dicts."""
+    log.info(f"→ fetch_series called: series_id={series_id} start={start_date.date()} end={end_date.date()}")
     try:
         meta   = FRED_SERIES[series_id]
         data   = fred.get_series(
@@ -103,30 +111,38 @@ def fetch_series(fred: Fred, series_id: str, start_date: datetime, end_date: dat
             observation_end=end_date.strftime("%Y-%m-%d"),
         )
         rows = []
+        null_values = 0
         for date, value in data.items():
+            is_null = str(value) == "."
+            if is_null:
+                null_values += 1
             rows.append({
                 "series_id":   series_id,
                 "series_name": meta["name"],
                 "frequency":   meta["frequency"],
                 "domain":      meta["domain"],
                 "date":        date.date(),
-                "value":       None if str(value) == "." else float(value),
+                "value":       None if is_null else float(value),
                 "ingested_at": datetime.utcnow(),
                 "trade_date":  end_date.strftime("%Y-%m-%d"),
             })
-        log.info(f"  {series_id}: {len(rows)} observations")
+        log.info(f"← fetch_series done: {series_id}: {len(rows)} observations, {null_values} null/missing")
+        if null_values > 0:
+            log.debug(f"  {series_id}: {null_values} missing observations (FRED '.' values)")
         return rows
     except Exception as e:
-        log.warning(f"  Failed to fetch {series_id}: {e}")
+        log.error(f"  Failed to fetch {series_id}: {e}", exc_info=True)
         return []
 
 
 def main():
+    log.info("→ main (bronze_rates) called")
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--bucket",  required=True)
     parser.add_argument("--days",    type=int, default=1)
     args = parser.parse_args()
+    log.info(f"  args: project={args.project} bucket={args.bucket} days={args.days}")
 
     spark = (
         SparkSession.builder
@@ -139,18 +155,22 @@ def main():
     end_date   = datetime.utcnow()
     start_date = end_date - timedelta(days=args.days + 5)  # +5 buffer for non-trading days
 
-    log.info(f"Fetching FRED series from {start_date.date()} to {end_date.date()}")
+    log.info(f"Fetching FRED series from {start_date.date()} to {end_date.date()} ({len(FRED_SERIES)} series)")
 
     fred_key = get_fred_api_key(args.project)
     fred     = Fred(api_key=fred_key)
 
     all_rows = []
+    series_results: dict[str, int] = {}
     for series_id in FRED_SERIES:
         rows = fetch_series(fred, series_id, start_date, end_date)
+        series_results[series_id] = len(rows)
         all_rows.extend(rows)
 
+    log.info(f"  Series fetch complete: {len(series_results)} series, {len(all_rows):,} total rows")
+
     if not all_rows:
-        log.warning("No FRED data fetched.")
+        log.warning("No FRED data fetched — skipping BigQuery write.")
         spark.stop()
         return
 
@@ -173,7 +193,7 @@ def main():
         .save()
     )
 
-    log.info(f"Done: {row_count:,} rows written to risklens_bronze.rates_r")
+    log.info(f"← main (bronze_rates) done: {row_count:,} rows written to risklens_bronze.rates_r")
     spark.stop()
 
 

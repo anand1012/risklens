@@ -6,15 +6,22 @@ GET /governance/ownership    All asset ownership records
 GET /governance/quality      Quality scores across all assets
 """
 
+import logging
+
 from fastapi import APIRouter, Query
 
 from api.db.bigquery import query_rows, project
 
 router = APIRouter(prefix="/governance", tags=["governance"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/sla")
 def get_sla_status(breaches_only: bool = Query(False)):
+    logger.info(
+        "→ get_sla_status called",
+        extra={"json_fields": {"breaches_only": breaches_only}},
+    )
     where = "s.breach_flag = TRUE" if breaches_only else "1=1"
     sql = f"""
         SELECT
@@ -32,11 +39,24 @@ def get_sla_status(breaches_only: bool = Query(False)):
         WHERE {where}
         ORDER BY s.breach_flag DESC, s.breach_duration_mins DESC
     """
-    return query_rows(sql)
+    rows = query_rows(sql)
+    breaches = sum(1 for r in rows if r.get("breach_flag"))
+    logger.info(
+        "← get_sla_status done",
+        extra={"json_fields": {
+            "result_count": len(rows),
+            "breach_count": breaches,
+            "breaches_only": breaches_only,
+        }},
+    )
+    if not rows:
+        logger.warning("get_sla_status returned 0 rows", extra={"json_fields": {"breaches_only": breaches_only}})
+    return rows
 
 
 @router.get("/ownership")
 def get_ownership(team: str | None = Query(None)):
+    logger.info("→ get_ownership called", extra={"json_fields": {"team": team}})
     where = f"o.team = '{team}'" if team else "1=1"
     sql = f"""
         SELECT
@@ -54,7 +74,15 @@ def get_ownership(team: str | None = Query(None)):
         WHERE {where}
         ORDER BY o.team, o.owner_name
     """
-    return query_rows(sql)
+    rows = query_rows(sql)
+    unassigned = sum(1 for r in rows if not r.get("owner_name"))
+    logger.info(
+        "← get_ownership done",
+        extra={"json_fields": {"result_count": len(rows), "unassigned_count": unassigned, "team": team}},
+    )
+    if unassigned:
+        logger.warning("get_ownership: %d assets have no owner", unassigned)
+    return rows
 
 
 @router.get("/quality")
@@ -62,12 +90,17 @@ def get_quality_scores(
     freshness_status: str | None = Query(None, description="fresh | stale | critical"),
     schema_drift: bool | None = Query(None),
 ):
+    logger.info(
+        "→ get_quality_scores called",
+        extra={"json_fields": {"freshness_status": freshness_status, "schema_drift": schema_drift}},
+    )
     filters = ["1=1"]
     if freshness_status:
         filters.append(f"q.freshness_status = '{freshness_status}'")
     if schema_drift is not None:
         filters.append(f"q.schema_drift = {str(schema_drift).upper()}")
     where = " AND ".join(filters)
+    logger.debug("get_quality_scores WHERE: %s", where)
 
     sql = f"""
         SELECT
@@ -85,4 +118,17 @@ def get_quality_scores(
         WHERE {where}
         ORDER BY q.freshness_status DESC, q.null_rate DESC
     """
-    return query_rows(sql)
+    rows = query_rows(sql)
+    critical = sum(1 for r in rows if r.get("freshness_status") == "critical")
+    drift_count = sum(1 for r in rows if r.get("schema_drift"))
+    logger.info(
+        "← get_quality_scores done",
+        extra={"json_fields": {
+            "result_count": len(rows),
+            "critical_count": critical,
+            "schema_drift_count": drift_count,
+        }},
+    )
+    if critical:
+        logger.warning("get_quality_scores: %d assets in critical freshness state", critical)
+    return rows
