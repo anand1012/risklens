@@ -199,7 +199,6 @@ def transform_trades(spark: SparkSession, project: str, bucket: str, trade_date:
         F.col("product_name").cast(StringType()),
         F.col("notional_currency_1").alias("currency"),
         F.col("rounded_notional_amount_1").cast(DoubleType()).alias("notional_amount"),
-        F.col("settlement_currency").cast(StringType()),
         F.col("underlying_asset_1").alias("underlying"),
         F.col("effective_date").cast(DateType()),
         F.col("end_date").cast(DateType()),
