@@ -3,6 +3,13 @@ RiskLens — Bronze Layer: Yahoo Finance Price Ingestion
 Fetches daily OHLCV prices for instruments matching the DTCC trade universe.
 Lands raw data as-is into BigQuery bronze layer. No transforms.
 
+Rate-limit mitigation:
+  - Single batched yf.download() call for all tickers (much more polite than
+    one HTTP request per ticker).
+  - 1-second sleep between per-ticker fallback calls if the batch returns empty.
+  - 3-attempt exponential backoff (5s → 10s → 20s) on any Exception.
+  - Zero-row guard: raises on weekdays with no data so the pipeline fails loudly.
+
 Instruments fetched:
   Equities  : JPM, GS, BAC, C, MS, BARC.L, DB
   ETFs/Index: SPY, EFA, HYG, LQD
@@ -22,11 +29,11 @@ Usage (Dataproc):
 
 import argparse
 import logging
+import time
 from datetime import datetime, timedelta
 
 import yfinance as yf
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
 from pyspark.sql.types import (DateType, DoubleType, LongType, StringType,
                                 StructField, StructType, TimestampType)
 
@@ -83,46 +90,145 @@ BRONZE_SCHEMA = StructType([
 ])
 
 
-def fetch_ticker(ticker: str, start: datetime, end: datetime) -> list[dict]:
-    """Fetch OHLCV for a single ticker via yfinance."""
+def _safe_float(val) -> float | None:
     try:
-        meta = INSTRUMENTS[ticker]
-        hist = yf.download(
-            ticker,
-            start=start.strftime("%Y-%m-%d"),
-            end=end.strftime("%Y-%m-%d"),
-            progress=False,
-            auto_adjust=False,
-        )
+        f = float(val)
+        return None if f != f else f   # NaN check
+    except (TypeError, ValueError):
+        return None
 
-        if hist.empty:
-            log.warning(f"  No data for {ticker}")
-            return []
 
-        rows = []
-        for date, row in hist.iterrows():
-            rows.append({
-                "ticker":      ticker,
-                "name":        meta["name"],
-                "asset_class": meta["asset_class"],
-                "currency":    meta["currency"],
-                "date":        date.date(),
-                "open":        float(row["Open"])      if row["Open"]      == row["Open"] else None,
-                "high":        float(row["High"])      if row["High"]      == row["High"] else None,
-                "low":         float(row["Low"])       if row["Low"]       == row["Low"]  else None,
-                "close":       float(row["Close"])     if row["Close"]     == row["Close"]else None,
-                "adj_close":   float(row["Adj Close"]) if row["Adj Close"] == row["Adj Close"] else None,
-                "volume":      int(row["Volume"])      if row["Volume"]    == row["Volume"]else None,
-                "ingested_at": datetime.utcnow(),
-                "trade_date":  end.strftime("%Y-%m-%d"),
-            })
+def _safe_int(val) -> int | None:
+    try:
+        f = float(val)
+        return None if f != f else int(f)
+    except (TypeError, ValueError):
+        return None
 
-        log.info(f"  {ticker}: {len(rows)} trading days")
-        return rows
 
-    except Exception as e:
-        log.warning(f"  Failed to fetch {ticker}: {e}")
+def _rows_from_hist(ticker: str, hist, end_date: datetime) -> list[dict]:
+    """Convert a yfinance history DataFrame to a list of row dicts."""
+    if hist is None or hist.empty:
         return []
+    meta = INSTRUMENTS[ticker]
+    now  = datetime.utcnow()
+    rows = []
+    for date, row in hist.iterrows():
+        # yfinance ≥0.2 uses auto_adjust=True so "Adj Close" may not exist
+        try:
+            adj_close = _safe_float(row.get("Adj Close", row.get("Close")))
+        except Exception:
+            adj_close = _safe_float(row.get("Close"))
+        rows.append({
+            "ticker":      ticker,
+            "name":        meta["name"],
+            "asset_class": meta["asset_class"],
+            "currency":    meta["currency"],
+            "date":        date.date(),
+            "open":        _safe_float(row.get("Open")),
+            "high":        _safe_float(row.get("High")),
+            "low":         _safe_float(row.get("Low")),
+            "close":       _safe_float(row.get("Close")),
+            "adj_close":   adj_close,
+            "volume":      _safe_int(row.get("Volume")),
+            "ingested_at": now,
+            "trade_date":  end_date.strftime("%Y-%m-%d"),
+        })
+    return rows
+
+
+def fetch_all_tickers_batched(tickers: list[str], start: datetime, end: datetime,
+                               max_attempts: int = 3) -> list[dict]:
+    """
+    Download all tickers in a single batched yf.download() call.
+    Falls back to per-ticker calls (with 1s sleep) if batch returns empty.
+    Retries up to max_attempts with exponential backoff (5s → 10s → 20s).
+    """
+    start_str = start.strftime("%Y-%m-%d")
+    end_str   = end.strftime("%Y-%m-%d")
+
+    # ── Attempt batched download ──────────────────────────────────────────────
+    backoff = 5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            log.info(f"Batched yf.download attempt {attempt}/{max_attempts}: "
+                     f"{len(tickers)} tickers from {start_str} to {end_str}")
+            raw = yf.download(
+                tickers,
+                start=start_str,
+                end=end_str,
+                group_by="ticker",
+                auto_adjust=True,
+                progress=False,
+                threads=False,   # single-threaded: gentler on rate limits
+            )
+            break
+        except Exception as e:
+            log.warning(f"  Batch download attempt {attempt} failed: {e}")
+            if attempt < max_attempts:
+                log.info(f"  Sleeping {backoff}s before retry…")
+                time.sleep(backoff)
+                backoff *= 2
+            else:
+                log.error("  All batch download attempts exhausted — falling back to per-ticker.")
+                raw = None
+
+    all_rows: list[dict] = []
+
+    if raw is not None and not raw.empty:
+        # Multi-ticker download: columns are (field, ticker) MultiIndex
+        for ticker in tickers:
+            try:
+                if len(tickers) == 1:
+                    hist = raw
+                else:
+                    hist = raw[ticker] if ticker in raw.columns.get_level_values(1) else None
+                rows = _rows_from_hist(ticker, hist, end)
+                if rows:
+                    log.info(f"  {ticker}: {len(rows)} rows (batched)")
+                    all_rows.extend(rows)
+                else:
+                    log.warning(f"  {ticker}: no data in batch result")
+            except Exception as e:
+                log.warning(f"  {ticker}: error extracting from batch result: {e}")
+    else:
+        log.warning("  Batch download returned empty — falling back to per-ticker calls.")
+
+    # ── Per-ticker fallback for any tickers still missing ────────────────────
+    fetched_tickers = {r["ticker"] for r in all_rows}
+    missing = [t for t in tickers if t not in fetched_tickers]
+
+    if missing:
+        log.info(f"  Falling back to per-ticker for {len(missing)} tickers: {missing}")
+        for ticker in missing:
+            fallback_backoff = 5
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    time.sleep(1)   # be polite between individual requests
+                    hist = yf.download(
+                        ticker,
+                        start=start_str,
+                        end=end_str,
+                        auto_adjust=True,
+                        progress=False,
+                    )
+                    rows = _rows_from_hist(ticker, hist, end)
+                    if rows:
+                        log.info(f"  {ticker}: {len(rows)} rows (per-ticker fallback, attempt {attempt})")
+                        all_rows.extend(rows)
+                    else:
+                        log.warning(f"  {ticker}: still no data on attempt {attempt}")
+                    break
+                except Exception as e:
+                    log.warning(f"  {ticker} attempt {attempt} failed: {e}")
+                    if attempt < max_attempts:
+                        log.info(f"  Sleeping {fallback_backoff}s before retry…")
+                        time.sleep(fallback_backoff)
+                        fallback_backoff *= 2
+                    else:
+                        log.error(f"  {ticker}: all {max_attempts} attempts failed — skipping.")
+
+    return all_rows
 
 
 def main():
@@ -143,15 +249,22 @@ def main():
     end_date   = datetime.utcnow()
     start_date = end_date - timedelta(days=args.days + 5)  # buffer for non-trading days
 
-    log.info(f"Fetching prices for {len(INSTRUMENTS)} instruments from {start_date.date()} to {end_date.date()}")
+    log.info(f"Fetching prices for {len(INSTRUMENTS)} instruments "
+             f"from {start_date.date()} to {end_date.date()}")
 
-    all_rows = []
-    for ticker in INSTRUMENTS:
-        rows = fetch_ticker(ticker, start_date, end_date)
-        all_rows.extend(rows)
+    tickers  = list(INSTRUMENTS.keys())
+    all_rows = fetch_all_tickers_batched(tickers, start_date, end_date)
 
     if not all_rows:
-        log.warning("No price data fetched.")
+        # Zero-row guard: fail loudly on weekdays
+        today = datetime.utcnow()
+        if today.weekday() < 5:
+            raise RuntimeError(
+                f"bronze_prices: Zero rows fetched for weekday {today.strftime('%Y-%m-%d')}. "
+                "Yahoo Finance may be rate-limiting or down. "
+                "Investigate — pipeline must not silently write nothing."
+            )
+        log.warning("No price data fetched (weekend/holiday — acceptable).")
         spark.stop()
         return
 
