@@ -8,6 +8,12 @@ This job replaces the HTTP fetch with deterministic synthetic generation that
 mirrors the real DTCC schema exactly — same column names, types, and value
 distributions observed in the live feed before it broke.
 
+Schema matches the existing risklens_bronze.trades_r table (16 columns):
+  dissemination_id, original_dissemination_id, action, execution_timestamp,
+  cleared, asset_class, sub_asset_class, product_name,
+  notional_currency_1, rounded_notional_amount_1, underlying_asset_1,
+  effective_date, end_date, ingested_at, source_file, trade_date
+
 ~2000 rows per trading day across 5 asset classes (CREDITS, EQUITIES, FOREX,
 RATES, COMMODITIES), consistent with historical data already in trades_r.
 
@@ -24,11 +30,9 @@ Usage (Dataproc):
 import argparse
 import logging
 import random
-import uuid
 from datetime import datetime, timedelta
 
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
 from pyspark.sql.types import StringType, StructField, StructType, TimestampType
 
 try:
@@ -58,62 +62,36 @@ _PRODUCT_NAME = {
     "RATES":       ["USD SOFR IRS", "EUR EURIBOR IRS", "GBP SONIA IRS", "USD-EUR XCCY"],
     "COMMODITIES": ["WTI Crude Oil Swap", "Brent Crude Swap", "Gold Swap", "Nat Gas Swap"],
 }
+_UNDERLYING = {
+    "CREDITS":     ["CDX.NA.IG.43", "CDX.NA.HY.43", "iTraxx EUR S42", "JPM 5Y CDS"],
+    "EQUITIES":    ["SPX", "VIX", "AAPL", "MSFT", "GS", "JPM"],
+    "FOREX":       ["EUR", "GBP", "JPY", "AUD", "CHF"],
+    "RATES":       ["USD-SOFR", "EUR-EURIBOR-3M", "GBP-SONIA", "USD-LIBOR-3M"],
+    "COMMODITIES": ["WTI CRUDE", "BRENT CRUDE", "GOLD", "NATURAL GAS"],
+}
 _CURRENCIES   = ["USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD"]
-_CLEARING     = ["C", "U"]          # C=cleared, U=uncleared
+_CLEARING     = ["C", "U"]   # C=cleared, U=uncleared
 _ACTIONS      = ["NEW", "CANCEL", "CORRECT", "NOVATION"]
 _ACTION_WEIGHTS = [0.85, 0.05, 0.07, 0.03]
-_DAY_COUNTS   = ["ACT/360", "ACT/365", "30/360", "ACT/ACT"]
-_PAY_FREQ     = ["Monthly", "Quarterly", "Semi-Annual", "Annual"]
 
-# Raw bronze schema — accept everything as string (immutable landing)
+# Schema matches actual risklens_bronze.trades_r table (16 columns)
 BRONZE_SCHEMA = StructType([
-    StructField("dissemination_id",     StringType(), True),
-    StructField("original_dissemination_id", StringType(), True),
-    StructField("action",               StringType(), True),
-    StructField("execution_timestamp",  StringType(), True),
-    StructField("cleared",              StringType(), True),
-    StructField("indication_of_collat", StringType(), True),
-    StructField("indication_of_end_usr", StringType(), True),
-    StructField("indication_of_othr_prc", StringType(), True),
-    StructField("day_count_convention", StringType(), True),
-    StructField("settlement_currency",  StringType(), True),
-    StructField("asset_class",          StringType(), True),
-    StructField("sub_asset_class",      StringType(), True),
-    StructField("product_name",         StringType(), True),
-    StructField("contract_type",        StringType(), True),
-    StructField("price_forming_continuation_data", StringType(), True),
-    StructField("underlying_asset_1",   StringType(), True),
-    StructField("underlying_asset_2",   StringType(), True),
-    StructField("price_notation_type",  StringType(), True),
-    StructField("price_notation",       StringType(), True),
-    StructField("additional_price_notation_type", StringType(), True),
-    StructField("additional_price_notation", StringType(), True),
-    StructField("notional_currency_1",  StringType(), True),
-    StructField("notional_currency_2",  StringType(), True),
-    StructField("rounded_notional_amount_1", StringType(), True),
-    StructField("rounded_notional_amount_2", StringType(), True),
-    StructField("payment_frequency_1",  StringType(), True),
-    StructField("payment_frequency_2",  StringType(), True),
-    StructField("reset_frequency_1",    StringType(), True),
-    StructField("reset_frequency_2",    StringType(), True),
-    StructField("embeds_option",        StringType(), True),
-    StructField("option_strike_price",  StringType(), True),
-    StructField("option_type",          StringType(), True),
-    StructField("option_family",        StringType(), True),
-    StructField("option_currency",      StringType(), True),
-    StructField("option_premium",       StringType(), True),
-    StructField("option_lock_period",   StringType(), True),
-    StructField("option_expiration_date", StringType(), True),
-    StructField("option_premium_currency", StringType(), True),
-    StructField("effective_date",       StringType(), True),
-    StructField("end_date",             StringType(), True),
-    StructField("day_count_convention_2", StringType(), True),
-    StructField("settlement_currency_2", StringType(), True),
-    StructField("exchange_rate",        StringType(), True),
-    StructField("exchange_rate_basis",  StringType(), True),
-    StructField("ingested_at",          TimestampType(), True),
-    StructField("source_file",          StringType(), True),
-    StructField("trade_date",           StringType(), True),
+    StructField("dissemination_id",          StringType(),   True),
+    StructField("original_dissemination_id", StringType(),   True),
+    StructField("action",                    StringType(),   True),
+    StructField("execution_timestamp",       StringType(),   True),
+    StructField("cleared",                   StringType(),   True),
+    StructField("asset_class",               StringType(),   True),
+    StructField("sub_asset_class",           StringType(),   True),
+    StructField("product_name",              StringType(),   True),
+    StructField("notional_currency_1",       StringType(),   True),
+    StructField("rounded_notional_amount_1", StringType(),   True),
+    StructField("underlying_asset_1",        StringType(),   True),
+    StructField("effective_date",            StringType(),   True),
+    StructField("end_date",                  StringType(),   True),
+    StructField("ingested_at",               TimestampType(),True),
+    StructField("source_file",               StringType(),   True),
+    StructField("trade_date",                StringType(),   True),
 ])
 
 
@@ -121,10 +99,6 @@ def _rand_notional() -> str:
     """Realistic notional bucketed to the nearest million (as DTCC rounds them)."""
     bucket = random.choice([1e6, 5e6, 10e6, 25e6, 50e6, 100e6, 250e6, 500e6])
     return str(int(bucket * random.uniform(0.5, 2.0) // 1e6 * 1e6))
-
-
-def _rand_rate() -> str:
-    return f"{random.uniform(0.001, 0.12):.6f}"
 
 
 def _rand_date_offset(base: datetime, min_days: int, max_days: int) -> str:
@@ -142,77 +116,40 @@ def generate_synthetic_trades(trade_date: datetime, n: int = 2000) -> list[dict]
     date_str = trade_date.strftime("%Y-%m-%d")
 
     rows = []
-    for i in range(n):
+    for _ in range(n):
         asset_class = random.choices(ASSET_CLASSES, weights=[0.20, 0.18, 0.25, 0.28, 0.09])[0]
         action = random.choices(_ACTIONS, weights=_ACTION_WEIGHTS)[0]
         dissem_id = str(random.randint(100_000_000, 999_999_999))
         orig_dissem_id = dissem_id if action == "NEW" else str(random.randint(100_000_000, 999_999_999))
 
-        # Execution timestamp: random time during the trading day (UTC)
         exec_hour  = random.randint(8, 20)
         exec_min   = random.randint(0, 59)
         exec_sec   = random.randint(0, 59)
         exec_ts    = f"{date_str}T{exec_hour:02d}:{exec_min:02d}:{exec_sec:02d}Z"
 
         currency_1 = random.choice(_CURRENCIES[:4])  # USD/EUR/GBP/JPY dominate
-        currency_2 = random.choice(_CURRENCIES) if asset_class in ("FOREX", "RATES") else None
         notional_1 = _rand_notional()
-        notional_2 = _rand_notional() if currency_2 else None
-
-        cleared = random.choices(_CLEARING, weights=[0.65, 0.35])[0]
-
-        is_option = asset_class in ("EQUITIES", "CREDITS", "COMMODITIES") and random.random() < 0.3
-        eff_date  = _rand_date_offset(trade_date, -5, 5)
-        end_date  = _rand_date_offset(trade_date, 90, 3650)
+        eff_date   = _rand_date_offset(trade_date, -5, 5)
+        end_date   = _rand_date_offset(trade_date, 90, 3650)
+        cleared    = random.choices(_CLEARING, weights=[0.65, 0.35])[0]
 
         rows.append({
-            "dissemination_id":              dissem_id,
-            "original_dissemination_id":     orig_dissem_id,
-            "action":                        action,
-            "execution_timestamp":           exec_ts,
-            "cleared":                       cleared,
-            "indication_of_collat":          random.choice(["Y", "N"]),
-            "indication_of_end_usr":         random.choice(["Y", "N", ""]),
-            "indication_of_othr_prc":        random.choice(["Y", "N", ""]),
-            "day_count_convention":          random.choice(_DAY_COUNTS),
-            "settlement_currency":           currency_1,
-            "asset_class":                   asset_class,
-            "sub_asset_class":               random.choice(_SUB_ASSET[asset_class]),
-            "product_name":                  random.choice(_PRODUCT_NAME[asset_class]),
-            "contract_type":                 "",
-            "price_forming_continuation_data": "N",
-            "underlying_asset_1":            random.choice(_PRODUCT_NAME[asset_class]),
-            "underlying_asset_2":            "",
-            "price_notation_type":           random.choice(["Spread", "Price", "Rate", "Yield"]),
-            "price_notation":                _rand_rate(),
-            "additional_price_notation_type": "",
-            "additional_price_notation":     "",
-            "notional_currency_1":           currency_1,
-            "notional_currency_2":           currency_2 or "",
-            "rounded_notional_amount_1":     notional_1,
-            "rounded_notional_amount_2":     notional_2 or "",
-            "payment_frequency_1":           random.choice(_PAY_FREQ),
-            "payment_frequency_2":           random.choice(_PAY_FREQ) if asset_class == "RATES" else "",
-            "reset_frequency_1":             random.choice(_PAY_FREQ) if asset_class == "RATES" else "",
-            "reset_frequency_2":             "",
-            "embeds_option":                 "Y" if is_option else "N",
-            "option_strike_price":           _rand_rate() if is_option else "",
-            "option_type":                   random.choice(["Call", "Put"]) if is_option else "",
-            "option_family":                 random.choice(["European", "American"]) if is_option else "",
-            "option_currency":               currency_1 if is_option else "",
-            "option_premium":                _rand_notional() if is_option else "",
-            "option_lock_period":            "",
-            "option_expiration_date":        _rand_date_offset(trade_date, 30, 365) if is_option else "",
-            "option_premium_currency":       currency_1 if is_option else "",
-            "effective_date":                eff_date,
-            "end_date":                      end_date,
-            "day_count_convention_2":        random.choice(_DAY_COUNTS) if asset_class == "RATES" else "",
-            "settlement_currency_2":         currency_2 or "",
-            "exchange_rate":                 f"{random.uniform(0.5, 1.5):.6f}" if currency_2 else "",
-            "exchange_rate_basis":           f"{currency_1}/{currency_2}" if currency_2 else "",
-            "ingested_at":                   now,
-            "source_file":                   f"synthetic://dtcc/{date_str}/{asset_class.lower()}_trades.csv",
-            "trade_date":                    date_str,
+            "dissemination_id":          dissem_id,
+            "original_dissemination_id": orig_dissem_id,
+            "action":                    action,
+            "execution_timestamp":       exec_ts,
+            "cleared":                   cleared,
+            "asset_class":               asset_class,
+            "sub_asset_class":           random.choice(_SUB_ASSET[asset_class]),
+            "product_name":              random.choice(_PRODUCT_NAME[asset_class]),
+            "notional_currency_1":       currency_1,
+            "rounded_notional_amount_1": notional_1,
+            "underlying_asset_1":        random.choice(_UNDERLYING[asset_class]),
+            "effective_date":            eff_date,
+            "end_date":                  end_date,
+            "ingested_at":               now,
+            "source_file":               f"synthetic://dtcc/{date_str}/{asset_class.lower()}_trades.csv",
+            "trade_date":                date_str,
         })
 
     return rows
