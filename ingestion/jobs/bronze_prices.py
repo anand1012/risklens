@@ -169,7 +169,7 @@ def fetch_all_tickers_batched(tickers: list[str], start: datetime, end: datetime
     Retries up to max_attempts with exponential backoff (5s → 10s → 20s).
     Returns empty list if all attempts fail (caller handles fallback).
     """
-    log.info(f"→ fetch_all_tickers_batched called: {len(tickers)} tickers, start={start.date()}, end={end.date()}")
+    log.info(f"[bronze→ingest] Fetching prices | tickers={len(tickers)} | tickers_list={tickers} | start={start.date()} | end={end.date()} | max_attempts={max_attempts} | program=bronze_prices.py")
     start_str = start.strftime("%Y-%m-%d")
     end_str   = end.strftime("%Y-%m-%d")
 
@@ -178,8 +178,7 @@ def fetch_all_tickers_batched(tickers: list[str], start: datetime, end: datetime
     raw = None
     for attempt in range(1, max_attempts + 1):
         try:
-            log.info(f"Batched yf.download attempt {attempt}/{max_attempts}: "
-                     f"{len(tickers)} tickers from {start_str} to {end_str}")
+            log.info(f"[bronze→ingest] Yahoo Finance batched download | attempt={attempt}/{max_attempts} | tickers={len(tickers)} | start={start_str} | end={end_str}")
             raw = yf.download(
                 tickers,
                 start=start_str,
@@ -191,11 +190,11 @@ def fetch_all_tickers_batched(tickers: list[str], start: datetime, end: datetime
             )
             if raw is not None and not raw.empty:
                 break
-            log.warning(f"  Batch attempt {attempt} returned empty DataFrame.")
+            log.warning(f"[bronze→ingest] Yahoo Finance batch attempt {attempt}/{max_attempts} returned empty DataFrame | tickers={len(tickers)} | start={start_str}")
         except Exception as e:
-            log.warning(f"  Batch download attempt {attempt} failed: {e}")
+            log.warning(f"[bronze→ingest] Yahoo Finance batch attempt {attempt}/{max_attempts} exception | error={e} | tickers={len(tickers)}")
         if attempt < max_attempts:
-            log.info(f"  Sleeping {backoff}s before retry…")
+            log.info(f"[bronze→ingest] Sleeping {backoff}s before retry | attempt={attempt}/{max_attempts}")
             time.sleep(backoff)
             backoff *= 2
 
@@ -211,19 +210,19 @@ def fetch_all_tickers_batched(tickers: list[str], start: datetime, end: datetime
                     hist = raw[ticker] if ticker in raw.columns.get_level_values(1) else None
                 rows = _rows_from_hist(ticker, hist, end)
                 if rows:
-                    log.info(f"  {ticker}: {len(rows)} rows (batched)")
+                    log.info(f"[bronze→ingest] ✓ Ticker fetched (batched) | ticker={ticker} | asset_class={INSTRUMENTS[ticker]['asset_class']} | rows={len(rows)} | date_range={start_str}→{end_str}")
                     all_rows.extend(rows)
                 else:
-                    log.warning(f"  {ticker}: no data in batch result")
+                    log.warning(f"[bronze→ingest] Ticker returned no rows (batched) | ticker={ticker} | asset_class={INSTRUMENTS[ticker]['asset_class']} | date_range={start_str}→{end_str}")
             except Exception as e:
-                log.warning(f"  {ticker}: error extracting from batch result: {e}")
+                log.warning(f"[bronze→ingest] Error extracting ticker from batch | ticker={ticker} | error={e}")
 
     # ── Per-ticker fallback for any tickers still missing ────────────────────
     fetched_tickers = {r["ticker"] for r in all_rows}
     missing = [t for t in tickers if t not in fetched_tickers]
 
     if missing:
-        log.info(f"  Falling back to per-ticker for {len(missing)} tickers: {missing}")
+        log.info(f"[bronze→ingest] Per-ticker fallback | missing_tickers={len(missing)} | tickers={missing}")
         for ticker in missing:
             fallback_backoff = 5
             for attempt in range(1, max_attempts + 1):
@@ -238,25 +237,25 @@ def fetch_all_tickers_batched(tickers: list[str], start: datetime, end: datetime
                     )
                     rows = _rows_from_hist(ticker, hist, end)
                     if rows:
-                        log.info(f"  {ticker}: {len(rows)} rows (per-ticker fallback, attempt {attempt})")
+                        log.info(f"[bronze→ingest] ✓ Ticker fetched (per-ticker fallback) | ticker={ticker} | rows={len(rows)} | attempt={attempt}/{max_attempts}")
                         all_rows.extend(rows)
                     else:
-                        log.warning(f"  {ticker}: still no data on attempt {attempt}")
+                        log.warning(f"[bronze→ingest] Ticker still empty on per-ticker fallback | ticker={ticker} | attempt={attempt}/{max_attempts}")
                     break
                 except Exception as e:
-                    log.warning(f"  {ticker} attempt {attempt} failed: {e}")
+                    log.warning(f"[bronze→ingest] Per-ticker fallback attempt failed | ticker={ticker} | attempt={attempt}/{max_attempts} | error={e}")
                     if attempt < max_attempts:
-                        log.info(f"  Sleeping {fallback_backoff}s before retry…")
+                        log.info(f"[bronze→ingest] Sleeping {fallback_backoff}s before retry | ticker={ticker}")
                         time.sleep(fallback_backoff)
                         fallback_backoff *= 2
                     else:
-                        log.error(f"  {ticker}: all {max_attempts} attempts failed — will use synthetic.")
+                        log.error(f"[bronze→ingest] FAILED: All {max_attempts} attempts exhausted | ticker={ticker} | will use synthetic fallback | error={e}", exc_info=True)
 
     fetched = {r["ticker"] for r in all_rows}
     missing_after = [t for t in tickers if t not in fetched]
-    log.info(f"← fetch_all_tickers_batched done: {len(all_rows)} rows, {len(fetched)} tickers fetched, {len(missing_after)} missing")
+    log.info(f"[bronze→ingest] Yahoo Finance fetch complete | total_rows={len(all_rows):,} | tickers_fetched={len(fetched)} | tickers_missing={len(missing_after)} | date_range={start_str}→{end_str}")
     if missing_after:
-        log.warning(f"  Tickers with no data after all attempts: {missing_after}")
+        log.warning(f"[bronze→ingest] Tickers with no Yahoo Finance data after all attempts | missing={missing_after} | will_use_synthetic={bool(missing_after)}")
     return all_rows
 
 
@@ -268,7 +267,7 @@ def generate_synthetic_prices(spark: SparkSession, project: str,
     Uses a random-walk with realistic daily volatility per instrument type.
     """
     date_str = trade_date.strftime("%Y-%m-%d")
-    log.info(f"→ generate_synthetic_prices called: date={date_str} tickers={len(tickers)}")
+    log.info(f"[bronze→ingest] SYNTHETIC FALLBACK activated | date={date_str} | tickers={len(tickers)} | seed={int(trade_date.strftime('%Y%m%d'))} | program=bronze_prices.py")
     seed = int(trade_date.strftime("%Y%m%d"))
     random.seed(seed)
     now = datetime.utcnow()
@@ -277,6 +276,7 @@ def generate_synthetic_prices(spark: SparkSession, project: str,
     last_prices: dict[str, float] = {}
     try:
         lookback = (trade_date - timedelta(days=5)).strftime("%Y-%m-%d")
+        log.info(f"[bronze→ingest] Loading seed prices from risklens_bronze.prices_r for synthetic | lookback_start={lookback} | tickers={len(tickers)}")
         df = (
             spark.read.format("bigquery")
             .option("project", project)
@@ -292,9 +292,9 @@ def generate_synthetic_prices(spark: SparkSession, project: str,
         for row in df.collect():
             if row["last_close"] is not None:
                 last_prices[row["ticker"]] = float(row["last_close"])
-        log.info(f"  Loaded {len(last_prices)} seed prices from BQ for synthetic generation.")
+        log.info(f"[bronze→ingest] BQ seed prices loaded | prices_found={len(last_prices)} | tickers_needing_hardcoded_default={len(tickers)-len(last_prices)}")
     except Exception as e:
-        log.warning(f"  Could not load seed prices from BQ: {e} — using hardcoded defaults.")
+        log.warning(f"[bronze→ingest] Could not load seed prices from risklens_bronze.prices_r | error={e} | falling_back=hardcoded_defaults")
 
     # Volatility regime by asset class (daily vol %)
     _vols = {
@@ -339,18 +339,18 @@ def generate_synthetic_prices(spark: SparkSession, project: str,
             "trade_date":  date_str,
         })
 
-    log.info(f"← generate_synthetic_prices done: {len(rows)} synthetic price rows for {date_str}")
+    log.info(f"[bronze→ingest] ✓ Synthetic prices generated | rows={len(rows)} | date={date_str} | tickers={len(tickers)} | bq_seeded={len(last_prices)} | hardcoded_fallback={len(tickers)-len(last_prices)}")
     return rows
 
 
 def main():
-    log.info("→ main (bronze_prices) called")
+    log.info(f"[bronze→ingest] Pipeline starting | program=bronze_prices.py | target=risklens_bronze.prices_r | instruments={len(INSTRUMENTS)}")
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--bucket",  required=True)
     parser.add_argument("--days",    type=int, default=1)
     args = parser.parse_args()
-    log.info(f"  args: project={args.project} bucket={args.bucket} days={args.days}")
+    log.info(f"[bronze→ingest] Args | project={args.project} | bucket={args.bucket} | days={args.days} | table=risklens_bronze.prices_r")
 
     spark = (
         SparkSession.builder
@@ -363,17 +363,16 @@ def main():
     end_date   = datetime.utcnow()
     start_date = end_date - timedelta(days=args.days + 5)  # buffer for non-trading days
 
-    log.info(f"Fetching prices for {len(INSTRUMENTS)} instruments "
-             f"from {start_date.date()} to {end_date.date()}")
+    log.info(f"[bronze→ingest] Fetching prices for {len(INSTRUMENTS)} instruments | start={start_date.date()} | end={end_date.date()} | program=bronze_prices.py")
 
     tickers  = list(INSTRUMENTS.keys())
-    log.debug(f"  Tickers: {tickers}")
+    log.debug(f"[bronze→ingest] Tickers: {tickers}")
     all_rows = fetch_all_tickers_batched(tickers, start_date, end_date)
-    log.info(f"  Yahoo Finance returned {len(all_rows):,} rows")
+    log.info(f"[bronze→ingest] Yahoo Finance returned {len(all_rows):,} rows | tickers_attempted={len(tickers)} | synthetic_fallback={len(all_rows) == 0}")
 
     # Synthetic fallback: if Yahoo Finance completely blocked, generate synthetic prices
     if not all_rows:
-        log.warning("Yahoo Finance returned zero rows — activating synthetic price fallback.")
+        log.warning(f"[bronze→ingest] Yahoo Finance returned zero rows — activating synthetic price fallback | tickers={len(tickers)} | date_range={start_date.date()}→{end_date.date()}")
         synthetic_days = 0
         # Generate for each weekday in the requested range
         current = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -382,26 +381,26 @@ def main():
                 synth = generate_synthetic_prices(spark, args.project, current, tickers)
                 all_rows.extend(synth)
                 synthetic_days += 1
-                log.debug(f"  Synthetic: {len(synth)} rows for {current.date()}")
+                log.debug(f"[bronze→ingest] Synthetic: {len(synth)} rows for {current.date()}")
             current += timedelta(days=1)
-        log.info(f"  Synthetic fallback generated {len(all_rows):,} rows for {synthetic_days} days")
+        log.info(f"[bronze→ingest] Synthetic fallback complete | total_rows={len(all_rows):,} | synthetic_days={synthetic_days} | tickers={len(tickers)}")
 
     if not all_rows:
         # Should never reach here after synthetic fallback, but guard anyway
         today = datetime.utcnow()
         if today.weekday() < 5:
-            log.error(f"bronze_prices: Zero rows even after synthetic fallback for weekday {today.strftime('%Y-%m-%d')}")
+            log.error(f"[bronze→ingest] FAILED: Zero rows even after synthetic fallback | date={today.strftime('%Y-%m-%d')} | table=risklens_bronze.prices_r | program=bronze_prices.py", exc_info=False)
             raise RuntimeError(
                 f"bronze_prices: Zero rows even after synthetic fallback for weekday "
                 f"{today.strftime('%Y-%m-%d')}. Investigate the generator."
             )
-        log.warning("No price data and it's a weekend/holiday — acceptable, stopping.")
+        log.warning(f"[bronze→ingest] No price data on weekend/holiday | date={today.strftime('%Y-%m-%d')} | acceptable, stopping")
         spark.stop()
         return
 
     df = spark.createDataFrame(all_rows, schema=BRONZE_SCHEMA)
     row_count = df.count()
-    log.info(f"Writing {row_count:,} rows to BigQuery risklens_bronze.prices_r")
+    log.info(f"[bronze→ingest] Writing to BigQuery | table=risklens_bronze.prices_r | rows={row_count:,} | partition=date | cluster=ticker,asset_class,currency | mode=append")
 
     (
         df.write
@@ -418,7 +417,7 @@ def main():
         .save()
     )
 
-    log.info(f"← main (bronze_prices) done: {row_count:,} rows written to risklens_bronze.prices_r")
+    log.info(f"[bronze→ingest] ✓ Written {row_count:,} rows → risklens_bronze.prices_r | date_range={start_date.date()}→{end_date.date()} | tickers={len(tickers)} | next=silver_transform.py")
     spark.stop()
 
 

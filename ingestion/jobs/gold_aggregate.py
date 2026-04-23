@@ -74,7 +74,7 @@ RISK_FACTOR_MAP = {
 def read_silver(spark: SparkSession, project: str, table: str,
                 trade_date: str | None = None) -> DataFrame | None:
     """Read from silver layer. Returns None if the table does not exist."""
-    log.info(f"→ read_silver called: table={table} trade_date={trade_date}")
+    log.info(f"[silver→gold] Reading silver source | table=risklens_silver.{table} | date_filter={trade_date} | program=gold_aggregate.py")
     try:
         df = (
             spark.read
@@ -86,20 +86,20 @@ def read_silver(spark: SparkSession, project: str, table: str,
         )
     except Exception as e:
         if "not found" in str(e).lower():
-            log.warning(f"  read_silver: silver.{table} does not exist — returning None")
+            log.warning(f"[silver→gold] Silver table not found | table=risklens_silver.{table} — returning None")
             return None
-        log.error(f"  read_silver: failed to read silver.{table}: {e}", exc_info=True)
+        log.error(f"[silver→gold] FAILED: Read error | table=risklens_silver.{table} | error={e}", exc_info=True)
         raise
     if trade_date:
         df = df.filter(F.col("trade_date") == trade_date)
-    log.info(f"← read_silver done: table={table}")
+    log.info(f"[silver→gold] Silver read complete | table=risklens_silver.{table} | date={trade_date}")
     return df
 
 
 def read_gold_table(spark: SparkSession, project: str,
                     table: str, trade_date: str) -> DataFrame | None:
     """Read from gold layer. Returns None if the table does not exist."""
-    log.info(f"→ read_gold_table called: table={table} trade_date={trade_date}")
+    log.info(f"[silver→gold] Reading gold table (cross-table join) | table=risklens_gold.{table} | date={trade_date} | program=gold_aggregate.py")
     try:
         df = (
             spark.read
@@ -110,13 +110,14 @@ def read_gold_table(spark: SparkSession, project: str,
             .load()
             .filter(F.col("trade_date") == trade_date)
         )
-        log.info(f"← read_gold_table done: table={table}")
+        row_count = df.count()
+        log.info(f"[silver→gold] Gold table read complete | table=risklens_gold.{table} | rows={row_count:,} | date={trade_date}")
         return df
     except Exception as e:
         if "not found" in str(e).lower():
-            log.warning(f"  read_gold_table: gold.{table} does not exist — returning None")
+            log.warning(f"[silver→gold] Gold table not found | table=risklens_gold.{table} — returning None")
             return None
-        log.error(f"  read_gold_table: failed to read gold.{table}: {e}", exc_info=True)
+        log.error(f"[silver→gold] FAILED: Read error | table=risklens_gold.{table} | error={e}", exc_info=True)
         raise
 
 
@@ -125,10 +126,10 @@ def write_gold(df: DataFrame, project: str, bucket: str,
                partition_field: str | None = None,
                partition_type: str = "DAY",
                cluster_fields: str | None = None) -> int:
-    log.info(f"→ write_gold called: table={table} mode={mode}")
+    log.info(f"[silver→gold] Writing gold table | table=risklens_gold.{table} | mode={mode} | partition={partition_field} | cluster={cluster_fields} | program=gold_aggregate.py")
     row_count = df.count()
     if row_count == 0:
-        log.warning(f"  write_gold: risklens_gold.{table}: 0 rows — skipping write")
+        log.warning(f"[silver→gold] 0 rows — skipping write | table=risklens_gold.{table} | mode={mode}")
         return 0
     writer = (
         df.write
@@ -145,7 +146,7 @@ def write_gold(df: DataFrame, project: str, bucket: str,
     if cluster_fields:
         writer = writer.option("clusteredFields", cluster_fields)
     writer.mode(mode).save()
-    log.info(f"← write_gold done: risklens_gold.{table}: {row_count:,} rows written")
+    log.info(f"[silver→gold] ✓ Written {row_count:,} rows → risklens_gold.{table} | partition={partition_field} | program=gold_aggregate.py")
     return row_count
 
 
@@ -161,7 +162,7 @@ def update_asset_catalog(spark: SparkSession, project: str, bucket: str,
     already be registered by scripts/fix_catalog_assets.py (or equivalent
     one-shot seeder); if not, this call is a no-op by design.
     """
-    log.info(f"→ update_asset_catalog called: asset_id={asset_id} row_count={row_count} trade_date={trade_date}")
+    log.info(f"[silver→gold] Updating asset catalog | asset_id={asset_id} | row_count={row_count:,} | trade_date={trade_date} | table=risklens_catalog.assets | program=gold_aggregate.py")
     from google.cloud import bigquery
     client = bigquery.Client(project=project)
     sql = f"""
@@ -186,12 +187,12 @@ def update_asset_catalog(spark: SparkSession, project: str, bucket: str,
             ]
         ),
     ).result()
-    log.info(f"← update_asset_catalog done: asset_id={asset_id}")
+    log.info(f"[silver→gold] ✓ Asset catalog updated | asset_id={asset_id} | row_count={row_count:,} | trade_date={trade_date}")
 
 
 def update_sla_status(spark: SparkSession, project: str, bucket: str,
                       asset_id: str, trade_date: str):
-    log.info(f"→ update_sla_status called: asset_id={asset_id} trade_date={trade_date}")
+    log.info(f"[silver→gold] Updating SLA status | asset_id={asset_id} | trade_date={trade_date} | table=risklens_catalog.sla_status | program=gold_aggregate.py")
     now      = datetime.utcnow()
     expected = now.replace(hour=8, minute=0, second=0, microsecond=0)
     breach   = now > expected
@@ -214,7 +215,7 @@ def update_sla_status(spark: SparkSession, project: str, bucket: str,
         .mode("append")
         .save()
     )
-    log.info(f"← update_sla_status done: asset_id={asset_id} breach={breach}")
+    log.info(f"[silver→gold] ✓ SLA status written | asset_id={asset_id} | breach={breach} | trade_date={trade_date}")
 
 
 # ── Gold Tables ───────────────────────────────────────────────────────────────
@@ -226,20 +227,22 @@ def build_trade_positions(spark: SparkSession, project: str,
     silver_enrich.py already joined trades × prices × rates into silver.positions,
     so this job just promotes the enriched silver table to gold with no additional join.
     """
-    log.info(f"→ build_trade_positions called: trade_date={trade_date}")
+    log.info(f"[silver→gold] Building trade_positions | source=risklens_silver.positions | target=risklens_gold.trade_positions | date={trade_date} | program=gold_aggregate.py")
 
     positions = read_silver(spark, project, "positions", trade_date)
 
     if positions is None or positions.rdd.isEmpty():
-        log.warning(f"  build_trade_positions: No silver positions for {trade_date} — skipping")
+        log.warning(f"[silver→gold] No silver positions for date={trade_date} | table=risklens_silver.positions — skipping trade_positions build")
         return 0
 
+    positions_count = positions.count()
+    log.info(f"[silver→gold] Silver positions loaded | rows={positions_count:,} | date={trade_date} | promoting to risklens_gold.trade_positions (no additional join)")
     gold_df = positions.withColumn("processed_at", F.current_timestamp())
 
     n = write_gold(gold_df, project, bucket, "trade_positions",
                    partition_field="trade_date",
                    cluster_fields="asset_class,currency")
-    log.info(f"← build_trade_positions done: trade_date={trade_date} rows={n:,}")
+    log.info(f"[silver→gold] ✓ trade_positions complete | date={trade_date} | rows_written={n:,} | source=risklens_silver.positions | target=risklens_gold.trade_positions")
     return n
 
 
@@ -258,13 +261,15 @@ def build_backtesting(spark: SparkSession, project: str,
     NOTE: VaR is stored here for back-testing ONLY.
     ES 97.5% (gold.es_outputs) is the regulatory capital metric.
     """
-    log.info(f"→ build_backtesting called: trade_date={trade_date}")
+    log.info(f"[silver→gold] Building backtesting | source=risklens_silver.risk_enriched | target=risklens_gold.backtesting | date={trade_date} | bcbs=BCBS457¶351-368 | program=gold_aggregate.py")
 
     risk = read_silver(spark, project, "risk_enriched", trade_date)
     if risk is None or risk.rdd.isEmpty():
-        log.warning(f"  build_backtesting: No silver risk_enriched data for {trade_date} — skipping")
+        log.warning(f"[silver→gold] No silver risk_enriched data for date={trade_date} | table=risklens_silver.risk_enriched — skipping backtesting build")
         return 0
 
+    risk_count = risk.count()
+    log.info(f"[silver→gold] Risk enriched loaded | rows={risk_count:,} | date={trade_date} | computing hypothetical_pnl, actual_pnl, exceptions")
     # Simulate hypothetical P&L from distribution N(mean_pnl, std_pnl)
     # In production: join against actual trade-level P&L vectors
     bt_df = (
@@ -351,10 +356,15 @@ def build_backtesting(spark: SparkSession, project: str,
     gold_df = result.unionByName(firm_row, allowMissingColumns=True) \
                     .withColumn("processed_at", F.current_timestamp())
 
+    # Log traffic light distribution before writing
+    zone_dist = gold_df.groupBy("traffic_light_zone").count().collect()
+    zone_str = " | ".join(f"{r['traffic_light_zone']}={r['count']}" for r in zone_dist if r['traffic_light_zone'])
+    log.info(f"[silver→gold] Backtesting traffic light distribution | {zone_str} | date={trade_date}")
+
     n = write_gold(gold_df, project, bucket, "backtesting",
                    partition_field="calc_date",
                    cluster_fields="desk,traffic_light_zone")
-    log.info(f"← build_backtesting done: trade_date={trade_date} rows={n:,}")
+    log.info(f"[silver→gold] ✓ backtesting complete | date={trade_date} | rows_written={n:,} | source=risklens_silver.risk_enriched | target=risklens_gold.backtesting | zones={zone_str}")
     return n
 
 
@@ -369,11 +379,11 @@ def build_es_outputs(spark: SparkSession, project: str,
       CSR Non-Securitisation → 20 days
       CSR Securitisation     → 40 days  (not in scope for RiskLens MVP)
     """
-    log.info(f"→ build_es_outputs called: trade_date={trade_date}")
+    log.info(f"[silver→gold] Building es_outputs | source=risklens_silver.risk_enriched | target=risklens_gold.es_outputs | date={trade_date} | bcbs=BCBS457¶21-22 | metric=ES_97.5pct | program=gold_aggregate.py")
 
     risk = read_silver(spark, project, "risk_enriched", trade_date)
     if risk is None or risk.rdd.isEmpty():
-        log.warning(f"  build_es_outputs: No silver risk_enriched data for {trade_date} — skipping")
+        log.warning(f"[silver→gold] No silver risk_enriched data for date={trade_date} | table=risklens_silver.risk_enriched — skipping es_outputs build")
         return 0
 
     # Risk class and liquidity horizon per desk
@@ -425,10 +435,12 @@ def build_es_outputs(spark: SparkSession, project: str,
     ).select(es_df.columns)
 
     gold_df = es_df.union(firm_row)
+    es_count = gold_df.count()
+    log.info(f"[silver→gold] ES outputs computed | desk_rows={es_count - 1} | plus_firm_aggregate=1 | total={es_count} | scaling=ES_1d×sqrt(LH) | date={trade_date}")
     n = write_gold(gold_df, project, bucket, "es_outputs",
                    partition_field="calc_date",
                    cluster_fields="desk,risk_class")
-    log.info(f"← build_es_outputs done: trade_date={trade_date} rows={n:,}")
+    log.info(f"[silver→gold] ✓ es_outputs complete | date={trade_date} | rows_written={n:,} | source=risklens_silver.risk_enriched | target=risklens_gold.es_outputs | risk_classes=GIRR,FX,CSR_NS,EQ,COMM,FIRM")
     return n
 
 
@@ -442,11 +454,11 @@ def build_pnl_vectors(spark: SparkSession, project: str,
     (realized including model error, slippage, reserves).
     pnl_unexplained = actual_pnl - hypothetical_pnl
     """
-    log.info(f"→ build_pnl_vectors called: trade_date={trade_date}")
+    log.info(f"[silver→gold] Building pnl_vectors | source=risklens_silver.risk_enriched | target=risklens_gold.pnl_vectors | date={trade_date} | bcbs=BCBS457¶329-345 | program=gold_aggregate.py")
 
     risk = read_silver(spark, project, "risk_enriched", trade_date)
     if risk is None or risk.rdd.isEmpty():
-        log.warning(f"  build_pnl_vectors: No silver risk_enriched data for {trade_date} — skipping")
+        log.warning(f"[silver→gold] No silver risk_enriched data for date={trade_date} | table=risklens_silver.risk_enriched — skipping pnl_vectors build")
         return 0
 
     risk_class_expr = (
@@ -497,7 +509,7 @@ def build_pnl_vectors(spark: SparkSession, project: str,
     n = write_gold(pnl_df, project, bucket, "pnl_vectors",
                    partition_field="calc_date",
                    cluster_fields="desk,risk_class")
-    log.info(f"← build_pnl_vectors done: trade_date={trade_date} rows={n:,}")
+    log.info(f"[silver→gold] ✓ pnl_vectors complete | date={trade_date} | rows_written={n:,} | columns=hypothetical_pnl,actual_pnl,pnl_unexplained,scenarios | source=risklens_silver.risk_enriched | target=risklens_gold.pnl_vectors")
     return n
 
 
@@ -517,19 +529,19 @@ def build_plat_results(spark: SparkSession, project: str,
     PLAT passes only if all three tests pass.
     Desks that fail PLAT may be subject to additional capital surcharges.
     """
-    log.info(f"→ build_plat_results called: trade_date={trade_date}")
+    log.info(f"[silver→gold] Building plat_results | sources=risklens_gold.pnl_vectors+risklens_silver.risk_enriched(full_history) | target=risklens_gold.plat_results | date={trade_date} | bcbs=BCBS457¶329-345 | tests=UPL_ratio,Spearman,KS | program=gold_aggregate.py")
 
     pnl_df = read_gold_table(spark, project, "pnl_vectors", trade_date)
 
     if pnl_df is None or pnl_df.rdd.isEmpty():
-        log.warning(f"  build_plat_results: No pnl_vectors data for {trade_date} — skipping")
+        log.warning(f"[silver→gold] No pnl_vectors data for date={trade_date} | table=risklens_gold.pnl_vectors — skipping plat_results build")
         return 0
 
     # Aggregate over the 12-month window available in silver
     # In production: window over 250 trading days of daily P&L observations
     pnl_all = read_silver(spark, project, "risk_enriched", None)  # full history
     if pnl_all is None or pnl_all.rdd.isEmpty():
-        log.warning(f"  build_plat_results: No risk_enriched history — skipping")
+        log.warning(f"[silver→gold] No risk_enriched full history | table=risklens_silver.risk_enriched — skipping plat_results build")
         return 0
 
     window_agg = pnl_all.groupBy("desk").agg(
@@ -601,10 +613,15 @@ def build_plat_results(spark: SparkSession, project: str,
         )
     )
 
+    # Log PLAT pass/fail distribution
+    plat_dist = plat_df.groupBy("plat_pass").count().collect()
+    plat_str = " | ".join(f"plat_pass={r['plat_pass']}:{r['count']}" for r in plat_dist)
+    log.info(f"[silver→gold] PLAT results computed | {plat_str} | tests=upl_ratio<0.95,spearman>0.40,ks<0.20 | date={trade_date}")
+
     n = write_gold(plat_df, project, bucket, "plat_results",
                    partition_field="calc_date",
                    cluster_fields="desk,plat_pass")
-    log.info(f"← build_plat_results done: trade_date={trade_date} rows={n:,}")
+    log.info(f"[silver→gold] ✓ plat_results complete | date={trade_date} | rows_written={n:,} | {plat_str} | source=risklens_silver.risk_enriched+risklens_gold.pnl_vectors | target=risklens_gold.plat_results")
     return n
 
 
@@ -619,13 +636,13 @@ def build_capital_charge(spark: SparkSession, project: str,
 
     This is the final regulatory number submitted to the supervisor.
     """
-    log.info(f"→ build_capital_charge called: trade_date={trade_date}")
+    log.info(f"[silver→gold] Building capital_charge | sources=risklens_gold.es_outputs+risklens_gold.backtesting | target=risklens_gold.capital_charge | date={trade_date} | bcbs=BCBS457¶180-186 | formula=ES×(3.0+traffic_light_multiplier) | program=gold_aggregate.py")
 
     es_df = read_gold_table(spark, project, "es_outputs", trade_date)
     bt_df = read_gold_table(spark, project, "backtesting", trade_date)
 
     if es_df is None or bt_df is None or es_df.rdd.isEmpty() or bt_df.rdd.isEmpty():
-        log.warning(f"  build_capital_charge: Missing ES or backtesting data for {trade_date} — skipping")
+        log.warning(f"[silver→gold] Missing ES or backtesting data for date={trade_date} | tables=risklens_gold.es_outputs,risklens_gold.backtesting — skipping capital_charge build")
         return 0
 
     bt_slim = bt_df.select(
@@ -662,10 +679,18 @@ def build_capital_charge(spark: SparkSession, project: str,
         )
     )
 
+    # Log capital charge summary by traffic light zone
+    zone_dist = charge_df.groupBy("traffic_light_zone").agg(
+        F.count("desk").alias("desk_count"),
+        F.sum("capital_charge_usd").alias("total_capital"),
+    ).collect()
+    zone_cap_str = " | ".join(f"{r['traffic_light_zone']}={r['desk_count']}desks/${r['total_capital']:,.0f}" for r in zone_dist if r['traffic_light_zone'])
+    log.info(f"[silver→gold] Capital charge computed | {zone_cap_str} | formula=ES_scaled×(3.0+multiplier) | date={trade_date}")
+
     n = write_gold(charge_df, project, bucket, "capital_charge",
                    partition_field="calc_date",
                    cluster_fields="desk,risk_class")
-    log.info(f"← build_capital_charge done: trade_date={trade_date} rows={n:,}")
+    log.info(f"[silver→gold] ✓ capital_charge complete | date={trade_date} | rows_written={n:,} | {zone_cap_str} | sources=risklens_gold.es_outputs+risklens_gold.backtesting | target=risklens_gold.capital_charge")
     return n
 
 
@@ -684,7 +709,7 @@ def build_rfet_results(spark: SparkSession, project: str,
     Source: silver.rates (cleaned FRED series — outliers flagged but not dropped,
     so all real observations are counted; bronze-only missing values already removed)
     """
-    log.info(f"→ build_rfet_results called: trade_date={trade_date}")
+    log.info(f"[silver→gold] Building rfet_results | source=risklens_silver.rates(full_history) | target=risklens_gold.rfet_results | date={trade_date} | bcbs=BCBS457¶76-80 | thresholds=75obs_12m_or_25obs_90d | program=gold_aggregate.py")
 
     cutoff_12m = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=365)).strftime("%Y-%m-%d")
     cutoff_90d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=90)).strftime("%Y-%m-%d")
@@ -699,12 +724,14 @@ def build_rfet_results(spark: SparkSession, project: str,
             .load()
             .select("series_id", "date")
         )
+        rates_count = rates.count()
+        log.info(f"[silver→gold] RFET: silver rates loaded | table=risklens_silver.rates | rows={rates_count:,} | cutoff_12m={cutoff_12m} | cutoff_90d={cutoff_90d}")
     except Exception as e:
-        log.warning(f"  Could not read silver.rates for RFET: {e}")
+        log.error(f"[silver→gold] FAILED: Could not read risklens_silver.rates for RFET | error={e}", exc_info=True)
         return 0
 
     if rates.rdd.isEmpty():
-        log.warning(f"  build_rfet_results: No silver rates data — skipping")
+        log.warning(f"[silver→gold] No silver rates data | table=risklens_silver.rates — skipping rfet_results build")
         return 0
 
     counts = rates.groupBy("series_id").agg(
@@ -767,10 +794,16 @@ def build_rfet_results(spark: SparkSession, project: str,
         )
     )
 
+    # Log RFET pass/fail by risk class
+    rfet_dist = rfet_df.groupBy("rfet_pass", "risk_class").count().collect()
+    rfet_pass_count = sum(r['count'] for r in rfet_dist if r['rfet_pass'])
+    rfet_fail_count = sum(r['count'] for r in rfet_dist if not r['rfet_pass'])
+    log.info(f"[silver→gold] RFET eligibility results | rfet_pass={rfet_pass_count} | rfet_fail={rfet_fail_count} | eligible_for_ima={rfet_pass_count} | date={trade_date}")
+
     n = write_gold(rfet_df, project, bucket, "rfet_results",
                    partition_field="rfet_date",
                    cluster_fields="risk_class,rfet_pass")
-    log.info(f"← build_rfet_results done: trade_date={trade_date} rows={n:,}")
+    log.info(f"[silver→gold] ✓ rfet_results complete | date={trade_date} | rows_written={n:,} | rfet_pass={rfet_pass_count} | rfet_fail={rfet_fail_count} | source=risklens_silver.rates | target=risklens_gold.rfet_results")
     return n
 
 
@@ -780,7 +813,7 @@ def build_risk_summary(spark: SparkSession, project: str,
     Daily consolidated risk summary — ES capital + PLAT + back-testing per desk.
     This is the regulatory submission-ready view.
     """
-    log.info(f"→ build_risk_summary called: trade_date={trade_date}")
+    log.info(f"[silver→gold] Building risk_summary | sources=risklens_gold.backtesting+es_outputs+plat_results+capital_charge | target=risklens_gold.risk_summary | date={trade_date} | program=gold_aggregate.py")
 
     bt_df   = read_gold_table(spark, project, "backtesting",    trade_date)
     es_df   = read_gold_table(spark, project, "es_outputs",     trade_date)
@@ -789,7 +822,7 @@ def build_risk_summary(spark: SparkSession, project: str,
 
     missing = [name for name, df in [("backtesting", bt_df), ("es_outputs", es_df), ("plat_results", plat_df), ("capital_charge", cap_df)] if df is None]
     if missing:
-        log.warning(f"  build_risk_summary: Missing gold tables {missing} for {trade_date} — skipping")
+        log.warning(f"[silver→gold] Missing gold tables for risk_summary | missing={missing} | date={trade_date} — skipping risk_summary build")
         return 0
 
     bt_slim   = bt_df.select(
@@ -851,20 +884,20 @@ def build_risk_summary(spark: SparkSession, project: str,
     n = write_gold(summary, project, bucket, "risk_summary",
                    partition_field="calc_date",
                    cluster_fields="desk,risk_class")
-    log.info(f"← build_risk_summary done: trade_date={trade_date} rows={n:,}")
+    log.info(f"[silver→gold] ✓ risk_summary complete | date={trade_date} | rows_written={n:,} | sources=risklens_gold.backtesting+es_outputs+plat_results+capital_charge | target=risklens_gold.risk_summary | regulatory_submission_ready=true")
     return n
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    log.info("→ main (gold_aggregate) called")
+    log.info(f"[silver→gold] Pipeline starting | program=gold_aggregate.py | targets=risklens_gold.(trade_positions,backtesting,es_outputs,pnl_vectors,plat_results,capital_charge,rfet_results,risk_summary)")
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--bucket",  required=True)
     parser.add_argument("--date",    default=datetime.utcnow().strftime("%Y-%m-%d"))
     args = parser.parse_args()
-    log.info(f"  args: project={args.project} bucket={args.bucket} date={args.date}")
+    log.info(f"[silver→gold] Args | project={args.project} | bucket={args.bucket} | date={args.date}")
 
     spark = (
         SparkSession.builder
@@ -875,7 +908,7 @@ def main():
     )
     spark.sparkContext.setLogLevel("WARN")
 
-    log.info(f"Gold aggregate for trade_date={args.date}")
+    log.info(f"[silver→gold] Running 8 gold builders | date={args.date} | order=trade_positions→backtesting→es_outputs→pnl_vectors→plat_results→capital_charge→rfet_results→risk_summary")
 
     # Dependency order: positions → ES → backtesting → PnL → PLAT → capital → summary
     n_positions = build_trade_positions(spark, args.project, args.bucket, args.date)
@@ -888,7 +921,7 @@ def main():
     try:
         n_summary = build_risk_summary(spark, args.project, args.bucket, args.date)
     except Exception as e:
-        log.error(f"  risk_summary failed: {e}")
+        log.error(f"[silver→gold] FAILED: risk_summary build failed | date={args.date} | error={e}", exc_info=True)
         n_summary = 0
 
     asset_counts = {
@@ -921,9 +954,10 @@ def main():
         update_asset_catalog(spark, args.project, args.bucket,
                              catalog_asset, 0, args.date)
 
-    log.info(f"← main (gold_aggregate) done: trade_date={args.date}")
+    total_rows = sum(asset_counts.values())
+    log.info(f"[silver→gold] ✓ Pipeline complete | program=gold_aggregate.py | date={args.date} | total_rows_written={total_rows:,}")
     for name, count in asset_counts.items():
-        log.info(f"  {name:<30}: {count:,}")
+        log.info(f"[silver→gold]   risklens_gold.{name:<28}: {count:,} rows")
 
     spark.stop()
 

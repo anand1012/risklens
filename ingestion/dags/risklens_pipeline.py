@@ -28,6 +28,8 @@ import logging
 import os
 from datetime import datetime, timedelta
 
+log = logging.getLogger("risklens_pipeline")
+
 from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.empty import EmptyOperator
@@ -82,7 +84,7 @@ CLUSTER_CONFIG = {
 
 def make_pyspark_job(script: str, extra_args: list[str] | None = None) -> dict:
     """Build a Dataproc PySpark job definition."""
-    log.debug(f"→ make_pyspark_job called: script={script} extra_args={extra_args}")
+    log.debug(f"[dag] Building PySpark job definition | script={script} | cluster={CLUSTER_NAME} | project={PROJECT_ID} | extra_args={extra_args}")
     args = [
         f"--project={PROJECT_ID}",
         f"--bucket={BUCKET}",
@@ -105,13 +107,13 @@ def make_pyspark_job(script: str, extra_args: list[str] | None = None) -> dict:
             },
         },
     }
-    log.debug(f"← make_pyspark_job done: script={script} args={args}")
+    log.debug(f"[dag] PySpark job definition ready | script={script} | gcs_uri=gs://{BUCKET}/jobs/{script} | args={args}")
     return job
 
 
 def make_silver_job() -> dict:
     """Silver job uses --date instead of --days."""
-    log.debug("→ make_silver_job called")
+    log.debug(f"[dag] Building silver_transform job | script=silver_transform.py | cluster={CLUSTER_NAME} | date_arg={{{{ ds }}}}")
     return {
         "reference":  {"project_id": PROJECT_ID},
         "placement":  {"cluster_name": CLUSTER_NAME},
@@ -134,7 +136,7 @@ def make_silver_job() -> dict:
 
 def make_silver_enrich_job() -> dict:
     """Silver enrich job: joins risk_outputs × rates → risk_enriched."""
-    log.debug("→ make_silver_enrich_job called")
+    log.debug(f"[dag] Building silver_enrich job | script=silver_enrich.py | cluster={CLUSTER_NAME} | date_arg={{{{ ds }}}}")
     return {
         "reference":  {"project_id": PROJECT_ID},
         "placement":  {"cluster_name": CLUSTER_NAME},
@@ -156,7 +158,7 @@ def make_silver_enrich_job() -> dict:
 
 
 def make_gold_job() -> dict:
-    log.debug("→ make_gold_job called")
+    log.debug(f"[dag] Building gold_aggregate job | script=gold_aggregate.py | cluster={CLUSTER_NAME} | date_arg={{{{ ds }}}}")
     return {
         "reference":  {"project_id": PROJECT_ID},
         "placement":  {"cluster_name": CLUSTER_NAME},
@@ -196,7 +198,10 @@ def log_pipeline_run(**context):
 
     ds = context["ds"]
     run_id = context.get("run_id", "unknown")
-    log.info("→ log_pipeline_run called: dag=risklens_pipeline date=%s run_id=%s", ds, run_id)
+    dag_run = context.get("dag_run")
+    start_time = dag_run.start_date if dag_run else None
+    elapsed = (datetime.utcnow() - start_time).seconds if start_time else "unknown"
+    log.info(f"[dag] Pipeline run complete | dag=risklens_pipeline | date={ds} | run_id={run_id} | elapsed_secs={elapsed} | stages=bronze(×4)→silver_transform→silver_enrich→gold_aggregate | program=risklens_pipeline.py")
 
     try:
         client = bigquery.Client(project=PROJECT_ID)
@@ -209,13 +214,13 @@ def log_pipeline_run(**context):
             "ip_address": "internal",
             "timestamp":  datetime.utcnow().isoformat(),
         }]
-        log.info("Writing pipeline audit row: event_id=%s date=%s run_id=%s", event_id, ds, run_id)
+        log.info(f"[dag] Writing pipeline audit log | table=risklens_catalog.access_log | event_id={event_id} | date={ds} | run_id={run_id}")
         client.insert_rows_json(
             f"{PROJECT_ID}.risklens_catalog.access_log", rows
         )
-        log.info("← log_pipeline_run done: audit row written to risklens_catalog.access_log event_id=%s", event_id)
+        log.info(f"[dag] ✓ Pipeline audit log written | table=risklens_catalog.access_log | event_id={event_id} | date={ds}")
     except Exception as exc:
-        log.warning("log_pipeline_run: Failed to write pipeline audit log to BigQuery: %s", exc, exc_info=True)
+        log.error(f"[dag] FAILED: Could not write pipeline audit log | table=risklens_catalog.access_log | date={ds} | run_id={run_id} | error={exc}", exc_info=True)
 
 
 # ── DAG Definition ────────────────────────────────────────────────────────────

@@ -37,7 +37,8 @@ def list_assets(
     limit: int = Query(100, le=500),
 ):
     logger.info(
-        "→ list_assets called",
+        "[api] GET /assets | tables=risklens_catalog.assets+ownership+quality_scores+sla_status | domain=%s | layer=%s | type=%s | limit=%d",
+        domain or "all", layer or "all", type or "all", limit,
         extra={"json_fields": {"domain": domain, "layer": layer, "type": type, "limit": limit}},
     )
     filters = ["1=1"]
@@ -48,7 +49,6 @@ def list_assets(
     if type:
         filters.append(f"a.type = '{type}'")
     where = " AND ".join(filters)
-    logger.debug("list_assets WHERE clause: %s", where)
 
     sql = f"""
         SELECT
@@ -84,17 +84,18 @@ def list_assets(
     """
     rows = [_fix_tags(r) for r in query_rows(sql)]
     logger.info(
-        "← list_assets done",
+        "[api] ✓ GET /assets | tables=risklens_catalog.assets+ownership+quality_scores+sla_status | rows=%d | domain=%s | layer=%s",
+        len(rows), domain or "all", layer or "all",
         extra={"json_fields": {"result_count": len(rows), "domain": domain, "layer": layer}},
     )
     if not rows:
-        logger.warning("list_assets returned 0 results", extra={"json_fields": {"domain": domain, "layer": layer, "type": type}})
+        logger.warning("[api] GET /assets returned 0 results | tables=risklens_catalog.assets | domain=%s | layer=%s | type=%s", domain, layer, type)
     return rows
 
 
 @router.get("/{asset_id}")
 def get_asset(asset_id: str):
-    logger.info("→ get_asset called", extra={"json_fields": {"asset_id": asset_id}})
+    logger.info("[api] GET /assets/%s | tables=risklens_catalog.assets+ownership+quality_scores+sla_status", asset_id, extra={"json_fields": {"asset_id": asset_id}})
     sql = f"""
         SELECT
             a.*,
@@ -120,12 +121,13 @@ def get_asset(asset_id: str):
     """
     rows = query_rows(sql)
     if not rows:
-        logger.warning("get_asset: asset not found", extra={"json_fields": {"asset_id": asset_id}})
+        logger.warning("[api] GET /assets/%s: asset not found | table=risklens_catalog.assets", asset_id, extra={"json_fields": {"asset_id": asset_id}})
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found")
     result = _fix_tags(rows[0])
     logger.info(
-        "← get_asset done",
+        "[api] ✓ GET /assets/%s | name=%s | layer=%s | domain=%s",
+        asset_id, result.get("name"), result.get("layer"), result.get("domain"),
         extra={"json_fields": {"asset_id": asset_id, "name": result.get("name")}},
     )
     return result
@@ -133,7 +135,7 @@ def get_asset(asset_id: str):
 
 @router.get("/{asset_id}/schema")
 def get_asset_schema(asset_id: str):
-    logger.info("→ get_asset_schema called", extra={"json_fields": {"asset_id": asset_id}})
+    logger.info("[api] GET /assets/%s/schema | table=risklens_catalog.schema_registry", asset_id, extra={"json_fields": {"asset_id": asset_id}})
     sql = f"""
         SELECT column_name, data_type, nullable, description, sample_value
         FROM `{project()}.risklens_catalog.schema_registry`
@@ -142,9 +144,10 @@ def get_asset_schema(asset_id: str):
     """
     rows = query_rows(sql)
     logger.info(
-        "← get_asset_schema done",
+        "[api] ✓ GET /assets/%s/schema | table=risklens_catalog.schema_registry | columns=%d",
+        asset_id, len(rows),
         extra={"json_fields": {"asset_id": asset_id, "column_count": len(rows)}},
     )
     if not rows:
-        logger.warning("get_asset_schema: no columns found for asset_id=%s", asset_id)
+        logger.warning("[api] GET /assets/%s/schema: no columns found | table=risklens_catalog.schema_registry", asset_id)
     return rows

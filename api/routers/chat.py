@@ -38,7 +38,8 @@ class ChatRequest(BaseModel):
 async def chat(req: ChatRequest, request: Request):
     session_id = request.headers.get("x-session-id", "unknown")
     logger.info(
-        "→ chat called",
+        "[api] POST /chat | session_id=%s | query=%s | top_k=%d",
+        session_id, req.query[:80], req.top_k,
         extra={"json_fields": {
             "session_id": session_id,
             "query_preview": req.query[:80],
@@ -48,16 +49,15 @@ async def chat(req: ChatRequest, request: Request):
     bm25 = request.app.state.bm25_index
     corpus = request.app.state.bm25_corpus
     bq_client = request.app.state.bq_client
-    logger.debug(
-        "chat: corpus_size=%d, top_k=%d",
-        len(corpus) if corpus else 0, req.top_k,
-    )
+    corpus_size = len(corpus) if corpus else 0
+    logger.info("[api] POST /chat | source=bm25_index+vertex_vector_search | corpus_size=%d | top_k=%d | session_id=%s", corpus_size, req.top_k, session_id)
 
     _log_query(req.query, request)
 
     async def event_stream():
         logger.info(
-            "chat: stream started",
+            "[api] POST /chat streaming started | session_id=%s | query=%s",
+            session_id, req.query[:80],
             extra={"json_fields": {"session_id": session_id, "query_preview": req.query[:80]}},
         )
         token_count = 0
@@ -75,28 +75,30 @@ async def chat(req: ChatRequest, request: Request):
                 yield chunk
         except Exception as exc:
             logger.error(
-                "Chat stream failed: %s",
-                exc,
+                "[api] FAILED: Chat stream error | session_id=%s | query=%s | error=%s",
+                session_id, req.query[:80], exc,
                 exc_info=True,
                 extra={"json_fields": {"session_id": session_id}},
             )
             yield "data: __done__\n\n"
         logger.info(
-            "chat: stream ended",
+            "[api] ✓ POST /chat stream complete | session_id=%s | sse_events=%d | query=%s",
+            session_id, token_count, req.query[:80],
             extra={"json_fields": {"session_id": session_id, "sse_events_emitted": token_count}},
         )
 
-    logger.info("← chat: returning StreamingResponse")
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 def _log_query(query: str, request: Request) -> None:
     """Fire-and-forget access log write to BigQuery."""
+    session_id = request.headers.get("x-session-id")
     logger.info(
-        "→ _log_query called",
+        "[api] Logging chat query | table=risklens_catalog.access_log | session_id=%s | query=%s",
+        session_id, query[:80],
         extra={"json_fields": {
             "query_preview": query[:80],
-            "session_id": request.headers.get("x-session-id"),
+            "session_id": session_id,
         }},
     )
     try:
@@ -106,12 +108,12 @@ def _log_query(query: str, request: Request) -> None:
             "action": "chat_query",
             "detail": query[:500],
             "ip_address": request.client.host if request.client else None,
-            "session_id": request.headers.get("x-session-id"),
+            "session_id": session_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         get_client().insert_rows_json(
             f"{project()}.risklens_catalog.access_log", [row]
         )
-        logger.debug("_log_query: access log row inserted, event_id=%s", row["event_id"])
+        logger.info("[api] ✓ Chat query logged | table=risklens_catalog.access_log | event_id=%s | session_id=%s", row["event_id"], session_id)
     except Exception as exc:
-        logger.warning("_log_query: failed to write access log: %s", exc)
+        logger.warning("[api] FAILED: Could not write chat query to access log | table=risklens_catalog.access_log | session_id=%s | error=%s", session_id, exc)

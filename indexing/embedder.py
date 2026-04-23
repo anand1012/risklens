@@ -36,12 +36,16 @@ _MAX_CHARS = 7_500
 
 def _init_vertexai(project: str) -> TextEmbeddingModel:
     logger.info(
-        "→ _init_vertexai called",
-        extra={"json_fields": {"project": project, "location": _LOCATION, "model": _EMBED_MODEL}},
+        "[indexing] Initializing Vertex AI embedding model | model=%s | project=%s | location=%s | program=embedder.py",
+        _EMBED_MODEL, project, _LOCATION,
+        extra={"json_fields": {"model": _EMBED_MODEL, "project": project, "location": _LOCATION}},
     )
     vertexai.init(project=project, location=_LOCATION)
     model = TextEmbeddingModel.from_pretrained(_EMBED_MODEL)
-    logger.info("← _init_vertexai done: model %s loaded", _EMBED_MODEL)
+    logger.info(
+        "[indexing] ✓ Vertex AI model loaded | model=%s | project=%s | location=%s",
+        _EMBED_MODEL, project, _LOCATION,
+    )
     return model
 
 
@@ -77,7 +81,8 @@ def embed_and_store(
         truncate: If True, truncate BQ tables before inserting (full refresh)
     """
     logger.info(
-        "→ embed_and_store called",
+        "[indexing] embed_and_store starting | chunks=%d | project=%s | truncate=%s | targets=%s.risklens_embeddings.chunks+vectors | program=embedder.py",
+        len(chunks), project, truncate, project,
         extra={"json_fields": {"chunk_count": len(chunks), "project": project, "truncate": truncate}},
     )
     model = _init_vertexai(project)
@@ -87,50 +92,52 @@ def embed_and_store(
     vectors_table = f"{project}.risklens_embeddings.vectors"
 
     if truncate:
-        logger.info("Truncating embedding tables before full refresh")
+        logger.info("[indexing] Truncating embedding tables for full refresh | tables=%s | %s", chunks_table, vectors_table)
         bq.query(f"TRUNCATE TABLE `{chunks_table}`").result()
-        logger.info("Truncated: %s", chunks_table)
+        logger.info("[indexing] ✓ Truncated | table=%s", chunks_table)
         bq.query(f"TRUNCATE TABLE `{vectors_table}`").result()
-        logger.info("Truncated: %s", vectors_table)
+        logger.info("[indexing] ✓ Truncated | table=%s", vectors_table)
 
     now = datetime.now(timezone.utc).isoformat()
     # Truncate any chunk that exceeds the per-text character limit
     oversized = [c for c in chunks if len(c.text) > _MAX_CHARS]
     if oversized:
         logger.warning(
-            "Truncating %d oversized chunks to %d chars",
+            "[indexing] Truncating %d oversized chunks to %d chars | program=embedder.py",
             len(oversized), _MAX_CHARS,
-            extra={"json_fields": {"oversized_chunk_ids": [c.chunk_id for c in oversized[:5]]}},
+            extra={"json_fields": {"oversized_count": len(oversized), "max_chars": _MAX_CHARS, "oversized_chunk_ids": [c.chunk_id for c in oversized[:5]]}},
         )
     texts = [c.text[:_MAX_CHARS] if len(c.text) > _MAX_CHARS else c.text for c in chunks]
 
+    total_batches = (len(texts) + _BATCH_SIZE - 1) // _BATCH_SIZE
     logger.info(
-        "Embedding %d chunks with %s (batch_size=%d)",
-        len(chunks), _EMBED_MODEL, _BATCH_SIZE,
-        extra={"json_fields": {"chunk_count": len(chunks), "model": _EMBED_MODEL, "batch_size": _BATCH_SIZE}},
+        "[indexing] Embedding %d chunks | model=%s | batch_size=%d | total_batches=%d | target=%s.risklens_embeddings.vectors",
+        len(chunks), _EMBED_MODEL, _BATCH_SIZE, total_batches, project,
+        extra={"json_fields": {"chunk_count": len(chunks), "model": _EMBED_MODEL, "batch_size": _BATCH_SIZE, "total_batches": total_batches}},
     )
     all_embeddings: list[list[float]] = []
-    total_batches = (len(texts) + _BATCH_SIZE - 1) // _BATCH_SIZE
     t_embed_start = time.monotonic()
 
     for i in range(0, len(texts), _BATCH_SIZE):
         batch = texts[i : i + _BATCH_SIZE]
         batch_num = i // _BATCH_SIZE + 1
-        logger.debug("Embedding batch %d/%d (%d texts)", batch_num, total_batches, len(batch))
         t_batch = time.monotonic()
         embeddings = _embed_batch(model, batch, "RETRIEVAL_DOCUMENT")
         batch_ms = int((time.monotonic() - t_batch) * 1000)
         all_embeddings.extend(embeddings)
         logger.info(
-            "Embedded batch %d/%d: %d/%d done (%dms)",
-            batch_num, total_batches, min(i + _BATCH_SIZE, len(texts)), len(texts), batch_ms,
-            extra={"json_fields": {"batch": batch_num, "total_batches": total_batches, "latency_ms": batch_ms}},
+            "[indexing] Embedding batch %d/%d complete | chunks=%d-%d | batch_size=%d | embed_dim=%d | latency_ms=%d",
+            batch_num, total_batches, i + 1, min(i + _BATCH_SIZE, len(texts)), len(batch),
+            len(embeddings[0]) if embeddings else 0, batch_ms,
+            extra={"json_fields": {"batch": batch_num, "total_batches": total_batches, "batch_size": len(batch), "latency_ms": batch_ms}},
         )
 
     total_embed_ms = int((time.monotonic() - t_embed_start) * 1000)
+    embed_dim = len(all_embeddings[0]) if all_embeddings else 0
     logger.info(
-        "All batches embedded",
-        extra={"json_fields": {"total_embeddings": len(all_embeddings), "total_embed_ms": total_embed_ms}},
+        "[indexing] ✓ All batches embedded | total_embeddings=%d | embed_dim=%d | total_embed_ms=%d | model=%s",
+        len(all_embeddings), embed_dim, total_embed_ms, _EMBED_MODEL,
+        extra={"json_fields": {"total_embeddings": len(all_embeddings), "embed_dim": embed_dim, "total_embed_ms": total_embed_ms}},
     )
 
     chunk_rows = [
@@ -150,39 +157,52 @@ def embed_and_store(
     ]
 
     logger.info(
-        "Writing chunk rows to BigQuery",
+        "[indexing] Writing chunk rows to BigQuery | table=%s | rows=%d",
+        chunks_table, len(chunk_rows),
         extra={"json_fields": {"row_count": len(chunk_rows), "table": chunks_table}},
     )
     t_bq = time.monotonic()
     errors = bq.insert_rows_json(chunks_table, chunk_rows)
     if errors:
         logger.error(
-            "BigQuery insert errors (chunks): %s",
-            errors,
+            "[indexing] FAILED: BigQuery insert error | table=%s | error_count=%d | errors=%s",
+            chunks_table, len(errors), errors,
             extra={"json_fields": {"error_count": len(errors), "table": chunks_table}},
+            exc_info=True,
         )
         raise RuntimeError(f"BigQuery insert errors (chunks): {errors}")
     chunk_bq_ms = int((time.monotonic() - t_bq) * 1000)
-    logger.info("Chunks written in %dms", chunk_bq_ms)
+    logger.info(
+        "[indexing] ✓ Chunk rows written | table=%s | rows=%d | latency_ms=%d",
+        chunks_table, len(chunk_rows), chunk_bq_ms,
+        extra={"json_fields": {"rows_written": len(chunk_rows), "latency_ms": chunk_bq_ms}},
+    )
 
     logger.info(
-        "Writing vector rows to BigQuery",
-        extra={"json_fields": {"row_count": len(vector_rows), "table": vectors_table}},
+        "[indexing] Writing vector rows to BigQuery | table=%s | rows=%d | embed_dim=%d",
+        vectors_table, len(vector_rows), embed_dim,
+        extra={"json_fields": {"row_count": len(vector_rows), "table": vectors_table, "embed_dim": embed_dim}},
     )
     t_vec = time.monotonic()
     errors = bq.insert_rows_json(vectors_table, vector_rows)
     if errors:
         logger.error(
-            "BigQuery insert errors (vectors): %s",
-            errors,
+            "[indexing] FAILED: BigQuery insert error | table=%s | error_count=%d | errors=%s",
+            vectors_table, len(errors), errors,
             extra={"json_fields": {"error_count": len(errors), "table": vectors_table}},
+            exc_info=True,
         )
         raise RuntimeError(f"BigQuery insert errors (vectors): {errors}")
     vec_bq_ms = int((time.monotonic() - t_vec) * 1000)
-    logger.info("Vectors written in %dms", vec_bq_ms)
+    logger.info(
+        "[indexing] ✓ Vector rows written | table=%s | rows=%d | embed_dim=%d | latency_ms=%d",
+        vectors_table, len(vector_rows), embed_dim, vec_bq_ms,
+        extra={"json_fields": {"rows_written": len(vector_rows), "embed_dim": embed_dim, "latency_ms": vec_bq_ms}},
+    )
 
     logger.info(
-        "← embed_and_store done",
+        "[indexing] ✓ embed_and_store complete | chunks_stored=%d | vectors_stored=%d | table_chunks=%s | table_vectors=%s | total_embed_ms=%d | chunk_bq_ms=%d | vec_bq_ms=%d | program=embedder.py",
+        len(chunk_rows), len(vector_rows), chunks_table, vectors_table, total_embed_ms, chunk_bq_ms, vec_bq_ms,
         extra={"json_fields": {
             "chunks_stored": len(chunk_rows),
             "vectors_stored": len(vector_rows),

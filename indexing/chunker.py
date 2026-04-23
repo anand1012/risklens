@@ -42,7 +42,11 @@ def _chunk_id(text: str) -> str:
 
 def _chunk_catalog_assets(client: bigquery.Client, project: str) -> list[ChunkDoc]:
     """One chunk per catalog asset — name, type, domain, layer, description, tags."""
-    logger.info("→ _chunk_catalog_assets called", extra={"json_fields": {"project": project}})
+    logger.info(
+        "[indexing] Chunking catalog assets | tables=%s.risklens_catalog.assets+ownership | project=%s | program=chunker.py",
+        project, project,
+        extra={"json_fields": {"project": project, "tables": "risklens_catalog.assets+ownership"}},
+    )
     query = f"""
         SELECT
             a.asset_id,
@@ -58,7 +62,11 @@ def _chunk_catalog_assets(client: bigquery.Client, project: str) -> list[ChunkDo
         LEFT JOIN `{project}.risklens_catalog.ownership` o USING (asset_id)
     """
     rows = list(client.query(query).result())
-    logger.debug("_chunk_catalog_assets: query returned %d asset rows", len(rows))
+    logger.info(
+        "[indexing] Catalog assets query complete | table=%s.risklens_catalog.assets | rows=%d",
+        project, len(rows),
+        extra={"json_fields": {"project": project, "asset_rows": len(rows)}},
+    )
     chunks: list[ChunkDoc] = []
 
     for row in rows:
@@ -87,18 +95,24 @@ def _chunk_catalog_assets(client: bigquery.Client, project: str) -> list[ChunkDo
             },
         ))
 
+    avg_len = int(sum(len(c.text) for c in chunks) / len(chunks)) if chunks else 0
     logger.info(
-        "← _chunk_catalog_assets done",
-        extra={"json_fields": {"chunk_count": len(chunks)}},
+        "[indexing] ✓ Catalog assets chunked | chunks=%d | source=%s.risklens_catalog.assets | avg_text_len=%d | program=chunker.py",
+        len(chunks), project, avg_len,
+        extra={"json_fields": {"chunk_count": len(chunks), "avg_text_len": avg_len}},
     )
     if not chunks:
-        logger.warning("_chunk_catalog_assets produced 0 chunks — is risklens_catalog.assets populated?")
+        logger.warning("[indexing] WARN: _chunk_catalog_assets produced 0 chunks | is %s.risklens_catalog.assets populated?", project)
     return chunks
 
 
 def _chunk_schema_registry(client: bigquery.Client, project: str) -> list[ChunkDoc]:
     """One chunk per table — all columns collapsed into a single schema narrative."""
-    logger.info("→ _chunk_schema_registry called", extra={"json_fields": {"project": project}})
+    logger.info(
+        "[indexing] Chunking schema registry | tables=%s.risklens_catalog.schema_registry+assets | project=%s | program=chunker.py",
+        project, project,
+        extra={"json_fields": {"project": project, "tables": "risklens_catalog.schema_registry+assets"}},
+    )
     query = f"""
         SELECT
             sr.asset_id,
@@ -114,7 +128,11 @@ def _chunk_schema_registry(client: bigquery.Client, project: str) -> list[ChunkD
         GROUP BY sr.asset_id, a.name, a.domain, a.layer
     """
     rows = list(client.query(query).result())
-    logger.debug("_chunk_schema_registry: query returned %d table rows", len(rows))
+    logger.info(
+        "[indexing] Schema registry query complete | table=%s.risklens_catalog.schema_registry | tables_found=%d",
+        project, len(rows),
+        extra={"json_fields": {"project": project, "schema_tables": len(rows)}},
+    )
     chunks: list[ChunkDoc] = []
 
     for row in rows:
@@ -149,18 +167,25 @@ def _chunk_schema_registry(client: bigquery.Client, project: str) -> list[ChunkD
             },
         ))
 
+    total_cols = sum(c.metadata.get("column_count", 0) for c in chunks)
+    avg_cols = int(total_cols / len(chunks)) if chunks else 0
     logger.info(
-        "← _chunk_schema_registry done",
-        extra={"json_fields": {"chunk_count": len(chunks)}},
+        "[indexing] ✓ Schema registry chunked | chunks=%d | total_columns=%d | avg_cols_per_table=%d | source=%s.risklens_catalog.schema_registry | program=chunker.py",
+        len(chunks), total_cols, avg_cols, project,
+        extra={"json_fields": {"chunk_count": len(chunks), "total_columns": total_cols, "avg_cols": avg_cols}},
     )
     if not chunks:
-        logger.warning("_chunk_schema_registry produced 0 chunks")
+        logger.warning("[indexing] WARN: _chunk_schema_registry produced 0 chunks | is %s.risklens_catalog.schema_registry populated?", project)
     return chunks
 
 
 def _chunk_lineage(client: bigquery.Client, project: str) -> list[ChunkDoc]:
     """One chunk per lineage node augmented with its upstream/downstream edges."""
-    logger.info("→ _chunk_lineage called", extra={"json_fields": {"project": project}})
+    logger.info(
+        "[indexing] Chunking lineage graph | tables=%s.risklens_lineage.nodes+edges | project=%s | program=chunker.py",
+        project, project,
+        extra={"json_fields": {"project": project, "tables": "risklens_lineage.nodes+edges"}},
+    )
     nodes_query = f"""
         SELECT node_id, name, type, domain, layer, metadata
         FROM `{project}.risklens_lineage.nodes`
@@ -172,7 +197,11 @@ def _chunk_lineage(client: bigquery.Client, project: str) -> list[ChunkDoc]:
 
     nodes = {row.node_id: row for row in client.query(nodes_query).result()}
     edges = list(client.query(edges_query).result())
-    logger.debug("_chunk_lineage: loaded %d nodes and %d edges", len(nodes), len(edges))
+    logger.info(
+        "[indexing] Lineage graph loaded | nodes=%d | edges=%d | tables=%s.risklens_lineage.nodes+edges",
+        len(nodes), len(edges), project,
+        extra={"json_fields": {"node_count": len(nodes), "edge_count": len(edges), "project": project}},
+    )
 
     # Build adjacency: upstream (in-edges) and downstream (out-edges) per node
     upstream: dict[str, list[str]] = {nid: [] for nid in nodes}
@@ -232,12 +261,15 @@ def _chunk_lineage(client: bigquery.Client, project: str) -> list[ChunkDoc]:
             },
         ))
 
+    avg_up = round(sum(c.metadata.get("upstream_count", 0) for c in chunks) / len(chunks), 1) if chunks else 0
+    avg_down = round(sum(c.metadata.get("downstream_count", 0) for c in chunks) / len(chunks), 1) if chunks else 0
     logger.info(
-        "← _chunk_lineage done",
-        extra={"json_fields": {"chunk_count": len(chunks), "node_count": len(nodes), "edge_count": len(edges)}},
+        "[indexing] ✓ Lineage chunked | chunks=%d | nodes=%d | edges=%d | avg_upstream=%.1f | avg_downstream=%.1f | source=%s.risklens_lineage | program=chunker.py",
+        len(chunks), len(nodes), len(edges), avg_up, avg_down, project,
+        extra={"json_fields": {"chunk_count": len(chunks), "node_count": len(nodes), "edge_count": len(edges), "avg_upstream": avg_up, "avg_downstream": avg_down}},
     )
     if not chunks:
-        logger.warning("_chunk_lineage produced 0 chunks")
+        logger.warning("[indexing] WARN: _chunk_lineage produced 0 chunks | is %s.risklens_lineage.nodes populated?", project)
     return chunks
 
 
@@ -247,23 +279,23 @@ def _chunk_lineage(client: bigquery.Client, project: str) -> list[ChunkDoc]:
 
 def build_chunks(project: str) -> list[ChunkDoc]:
     """Pull all BigQuery metadata and return the full corpus of ChunkDocs."""
-    logger.info("→ build_chunks called", extra={"json_fields": {"project": project}})
+    logger.info(
+        "[indexing] build_chunks starting | project=%s | sources=risklens_catalog.assets+schema_registry+ownership+risklens_lineage.nodes+edges | program=chunker.py",
+        project,
+        extra={"json_fields": {"project": project}},
+    )
     client = bigquery.Client(project=project)
-    logger.info("Building document corpus from BigQuery project: %s", project)
 
     chunks: list[ChunkDoc] = []
 
     catalog_chunks = _chunk_catalog_assets(client, project)
     chunks.extend(catalog_chunks)
-    logger.debug("build_chunks: after catalog assets: %d chunks total", len(chunks))
 
     schema_chunks = _chunk_schema_registry(client, project)
     chunks.extend(schema_chunks)
-    logger.debug("build_chunks: after schema registry: %d chunks total", len(chunks))
 
     lineage_chunks = _chunk_lineage(client, project)
     chunks.extend(lineage_chunks)
-    logger.debug("build_chunks: after lineage: %d chunks total", len(chunks))
 
     # Deduplicate by chunk_id (same text from multiple sources)
     seen: set[str] = set()
@@ -277,16 +309,17 @@ def build_chunks(project: str) -> list[ChunkDoc]:
             dupes += 1
 
     if dupes:
-        logger.warning("build_chunks: deduplicated %d duplicate chunks", dupes)
+        logger.warning("[indexing] build_chunks: deduplicated %d duplicate chunks | project=%s", dupes, project)
     logger.info(
-        "← build_chunks done",
+        "[indexing] ✓ build_chunks complete | catalog=%d | schema=%d | lineage=%d | total_before_dedup=%d | unique=%d | dupes_removed=%d | project=%s | program=chunker.py",
+        len(catalog_chunks), len(schema_chunks), len(lineage_chunks), len(chunks), len(unique), dupes, project,
         extra={"json_fields": {
-            "total_before_dedup": len(chunks),
-            "unique_chunks": len(unique),
-            "duplicates_removed": dupes,
             "catalog_chunks": len(catalog_chunks),
             "schema_chunks": len(schema_chunks),
             "lineage_chunks": len(lineage_chunks),
+            "total_before_dedup": len(chunks),
+            "unique_chunks": len(unique),
+            "duplicates_removed": dupes,
         }},
     )
     return unique

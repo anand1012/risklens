@@ -172,7 +172,7 @@ LINEAGE_NODES = [
 # ── Generators ───────────────────────────────────────────────────────────────
 
 def gen_trades(date: datetime, n: int = 2000) -> pd.DataFrame:
-    log.info(f"→ gen_trades called: date={date.date()} n={n}")
+    log.info(f"[bronze→ingest] Generating synthetic trades | target=risklens_bronze.risk_outputs_s | date={date.date()} | n={n} | desks={DESKS} | program=generate.py")
     rows = []
     for _ in range(n):
         desk = random.choice(DESKS)
@@ -191,7 +191,7 @@ def gen_trades(date: datetime, n: int = 2000) -> pd.DataFrame:
             "maturity_date":  (date + timedelta(days=random.randint(30, 3650))).strftime("%Y-%m-%d"),
             "ingested_at":    datetime.utcnow().isoformat(),
         })
-    log.info(f"← gen_trades done: date={date.date()} rows={len(rows):,}")
+    log.info(f"[bronze→ingest] ✓ Trades generated | date={date.date()} | rows={len(rows):,} | asset_classes={len(set(r['desk'] for r in rows))} | currencies={len(set(r['currency'] for r in rows))}")
     return pd.DataFrame(rows)
 
 
@@ -211,7 +211,7 @@ def gen_var_es(date: datetime, market_params: dict | None = None) -> pd.DataFram
       Rates          → vol_scalar × (1 + |sofr - 5| / 10)  (rate stress)
       FX/Commodities → vol_scalar
     """
-    log.info(f"→ gen_var_es called: date={date.date()} market_params={market_params}")
+    log.info(f"[bronze→ingest] Generating VaR/ES outputs | target=risklens_bronze.risk_outputs_s | date={date.date()} | desks={DESKS} | market_params_provided={market_params is not None} | program=generate.py")
     sofr      = (market_params or {}).get("sofr",      5.0)
     vix       = (market_params or {}).get("vix",       20.0)
     hy_spread = (market_params or {}).get("hy_spread", 3.5)
@@ -251,7 +251,7 @@ def gen_var_es(date: datetime, market_params: dict | None = None) -> pd.DataFram
             "trade_date":   date.strftime("%Y-%m-%d"),
             "ingested_at":  datetime.utcnow().isoformat(),
         })
-    log.info(f"← gen_var_es done: date={date.date()} rows={len(rows)} vol_scalar={vix/20.0:.2f}")
+    log.info(f"[bronze→ingest] ✓ VaR/ES generated | date={date.date()} | rows={len(rows)} | vol_scalar={vix/20.0:.2f} | sofr={sofr:.3f} | vix={vix:.1f} | hy_spread={hy_spread:.2f} | method=HistoricalSimulation | scenarios=250")
     return pd.DataFrame(rows)
 
 
@@ -260,7 +260,7 @@ def gen_pnl_vectors(date: datetime, market_params: dict | None = None) -> pd.Dat
     Generate P&L scenario vectors scaled by market volatility.
     std_pnl ~ vol_scalar × base_std so P&L distributions widen in stress.
     """
-    log.info(f"→ gen_pnl_vectors called: date={date.date()}")
+    log.info(f"[bronze→ingest] Generating P&L vectors | target=risklens_bronze.risk_outputs_s | date={date.date()} | desks={DESKS} | num_scenarios=100 | program=generate.py")
     vix = (market_params or {}).get("vix", 20.0)
     vol_scalar = vix / 20.0
 
@@ -279,12 +279,12 @@ def gen_pnl_vectors(date: datetime, market_params: dict | None = None) -> pd.Dat
             "trade_date":   date.strftime("%Y-%m-%d"),
             "ingested_at":  datetime.utcnow().isoformat(),
         })
-    log.info(f"← gen_pnl_vectors done: date={date.date()} rows={len(rows)} vol_scalar={vol_scalar:.2f}")
+    log.info(f"[bronze→ingest] ✓ P&L vectors generated | date={date.date()} | rows={len(rows)} | vol_scalar={vol_scalar:.2f} | vix={vix:.1f} | scenarios_per_desk=100")
     return pd.DataFrame(rows)
 
 
 def gen_pipeline_logs(date: datetime) -> pd.DataFrame:
-    log.info(f"→ gen_pipeline_logs called: date={date.date()}")
+    log.info(f"[bronze→ingest] Generating pipeline logs | target=risklens_bronze.pipeline_logs_s | date={date.date()} | jobs=6 | program=generate.py")
     jobs = [
         "bronze_trades_job", "bronze_rates_job", "bronze_prices_job",
         "bronze_synthetic_job", "silver_transform_job", "gold_aggregate_job",
@@ -304,12 +304,12 @@ def gen_pipeline_logs(date: datetime) -> pd.DataFrame:
             "started_at":   (date.replace(hour=6) + timedelta(minutes=random.randint(0, 60))).isoformat(),
         })
     failed = sum(1 for r in rows if r["status"] == "FAILED")
-    log.info(f"← gen_pipeline_logs done: date={date.date()} rows={len(rows)} failed_jobs={failed}")
+    log.info(f"[bronze→ingest] ✓ Pipeline logs generated | date={date.date()} | rows={len(rows)} | failed_jobs={failed} | success_jobs={len(rows)-failed}")
     return pd.DataFrame(rows)
 
 
 def gen_ownership() -> pd.DataFrame:
-    log.info(f"→ gen_ownership called: asset_count={len(ASSETS)}")
+    log.info(f"[bronze→ingest] Generating ownership registry | target=risklens_catalog.ownership | asset_count={len(ASSETS)} | owners={len(OWNERS)} | program=generate.py")
     rows = []
     for i, asset in enumerate(ASSETS):
         owner = OWNERS[i % len(OWNERS)]
@@ -325,12 +325,12 @@ def gen_ownership() -> pd.DataFrame:
     rows[-1]["owner_name"] = None
     rows[-2]["owner_name"] = None
     unassigned = sum(1 for r in rows if r["owner_name"] is None)
-    log.info(f"← gen_ownership done: rows={len(rows)} unassigned={unassigned}")
+    log.info(f"[bronze→ingest] ✓ Ownership registry generated | rows={len(rows)} | unassigned={unassigned} | assigned={len(rows)-unassigned}")
     return pd.DataFrame(rows)
 
 
 def gen_quality_scores(date: datetime) -> pd.DataFrame:
-    log.info(f"→ gen_quality_scores called: date={date.date()}")
+    log.info(f"[bronze→ingest] Generating quality scores | target=risklens_catalog.quality_scores | date={date.date()} | asset_count={len(ASSETS)} | program=generate.py")
     rows = []
     for asset in ASSETS:
         null_rate = round(random.uniform(0.0, 0.05), 4)
@@ -345,12 +345,12 @@ def gen_quality_scores(date: datetime) -> pd.DataFrame:
         })
     critical_count = sum(1 for r in rows if r["freshness_status"] == "critical")
     drift_count = sum(1 for r in rows if r["schema_drift"])
-    log.info(f"← gen_quality_scores done: date={date.date()} rows={len(rows)} critical={critical_count} schema_drift={drift_count}")
+    log.info(f"[bronze→ingest] ✓ Quality scores generated | date={date.date()} | rows={len(rows)} | freshness_critical={critical_count} | schema_drift={drift_count}")
     return pd.DataFrame(rows)
 
 
 def gen_sla_status(date: datetime) -> pd.DataFrame:
-    log.info(f"→ gen_sla_status called: date={date.date()}")
+    log.info(f"[bronze→ingest] Generating SLA status | target=risklens_catalog.sla_status | date={date.date()} | asset_count={len(ASSETS)} | program=generate.py")
     rows = []
     for asset in ASSETS:
         expected = date.replace(hour=8, minute=0, second=0)
@@ -366,12 +366,12 @@ def gen_sla_status(date: datetime) -> pd.DataFrame:
             "checked_at":           date.isoformat(),
         })
     breach_count = sum(1 for r in rows if r["breach_flag"])
-    log.info(f"← gen_sla_status done: date={date.date()} rows={len(rows)} breaches={breach_count}")
+    log.info(f"[bronze→ingest] ✓ SLA status generated | date={date.date()} | rows={len(rows)} | sla_breaches={breach_count} | on_time={len(rows)-breach_count}")
     return pd.DataFrame(rows)
 
 
 def gen_assets_catalog() -> pd.DataFrame:
-    log.info(f"→ gen_assets_catalog called: asset_count={len(ASSETS)}")
+    log.info(f"[bronze→ingest] Generating assets catalog | target=risklens_catalog.assets | asset_count={len(ASSETS)} | program=generate.py")
     rows = []
     for asset in ASSETS:
         rows.append({
@@ -387,13 +387,13 @@ def gen_assets_catalog() -> pd.DataFrame:
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
         })
-    log.info(f"← gen_assets_catalog done: rows={len(rows)}")
+    log.info(f"[bronze→ingest] ✓ Assets catalog generated | rows={len(rows)} | layers={set(a['layer'] for a in ASSETS)} | domains={set(a['domain'] for a in ASSETS)}")
     return pd.DataFrame(rows)
 
 
 def gen_schema_registry() -> pd.DataFrame:
     """One row per column per asset — column-level metadata for all catalog assets."""
-    log.info("→ gen_schema_registry called")
+    log.info(f"[bronze→ingest] Generating schema registry | target=risklens_catalog.schema_registry | program=generate.py")
     # Column definitions per asset_id
     SCHEMAS = {
         "bronze_dtcc_trades": [
@@ -620,13 +620,13 @@ def gen_schema_registry() -> pd.DataFrame:
                 "description":  description,
                 "sample_value": sample_value,
             })
-    log.info(f"← gen_schema_registry done: rows={len(rows)} assets={len(SCHEMAS)}")
+    log.info(f"[bronze→ingest] ✓ Schema registry generated | rows={len(rows)} | assets_covered={len(SCHEMAS)} | program=generate.py")
     return pd.DataFrame(rows)
 
 
 def gen_desk_registry() -> pd.DataFrame:
     """Desk-level model approval and governance registry (FRTB IMA, BCBS 457 ¶53-65)."""
-    log.info("→ gen_desk_registry called")
+    log.info(f"[bronze→ingest] Generating desk registry | target=risklens_catalog.desk_registry | bcbs=BCBS457¶53-65 | program=generate.py")
     DESK_META = [
         ("rates_desk",   "Rates",       "GIRR",   "Fixed Income",  "James Okafor",  "2024-01-15", 250, 150_000_000),
         ("fx_desk",      "FX",          "FX",     "FX & EM",       "Anita Kovacs",  "2024-01-15", 250, 80_000_000),
@@ -650,12 +650,12 @@ def gen_desk_registry() -> pd.DataFrame:
             "last_reviewed_date": "2026-01-10",
             "created_at":         datetime.utcnow().isoformat(),
         })
-    log.info(f"← gen_desk_registry done: rows={len(rows)}")
+    log.info(f"[bronze→ingest] ✓ Desk registry generated | rows={len(rows)} | desks={[r['desk_name'] for r in rows]}")
     return pd.DataFrame(rows)
 
 
 def gen_lineage() -> tuple[pd.DataFrame, pd.DataFrame]:
-    log.info(f"→ gen_lineage called: nodes={len(LINEAGE_NODES)} edges={len(LINEAGE_EDGES)}")
+    log.info(f"[bronze→ingest] Generating lineage graph | targets=risklens_lineage.nodes+risklens_lineage.edges | nodes={len(LINEAGE_NODES)} | edges={len(LINEAGE_EDGES)} | program=generate.py")
     # Build lookups so table-type nodes carry their real layer + domain from
     # the ASSETS manifest; source/pipeline nodes fall back to sensible defaults.
     asset_layers  = {a["asset_id"]: a["layer"]  for a in ASSETS}
@@ -675,7 +675,7 @@ def gen_lineage() -> tuple[pd.DataFrame, pd.DataFrame]:
          "created_at":   datetime.utcnow().isoformat()}
         for e in LINEAGE_EDGES
     ])
-    log.info(f"← gen_lineage done: nodes={len(nodes)} edges={len(edges)}")
+    log.info(f"[bronze→ingest] ✓ Lineage graph generated | nodes={len(nodes)} | edges={len(edges)} | node_types=source,pipeline,table")
     return nodes, edges
 
 
@@ -683,12 +683,12 @@ def gen_lineage() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    log.info("→ main (generate) called")
+    log.info(f"[bronze→ingest] Synthetic data generator starting | program=generate.py | generators=trades,var_es,pnl_vectors,pipeline_logs,quality_scores,sla_status,ownership,assets,schema_registry,desk_registry,lineage")
     parser = argparse.ArgumentParser()
     parser.add_argument("--days",       type=int, default=30,        help="Number of days of data to generate")
     parser.add_argument("--output-dir", default="/tmp/risklens/synthetic", help="Output directory")
     args = parser.parse_args()
-    log.info(f"  args: days={args.days} output_dir={args.output_dir}")
+    log.info(f"[bronze→ingest] Args | days={args.days} | output_dir={args.output_dir}")
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -696,7 +696,7 @@ def main():
     end_date   = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     start_date = end_date - timedelta(days=args.days)
 
-    log.info(f"Generating {args.days} days of synthetic data ({start_date.date()} to {end_date.date()}) → {out}")
+    log.info(f"[bronze→ingest] Generating {args.days} days of synthetic data | start={start_date.date()} | end={end_date.date()} | output_dir={out}")
 
     # Daily data
     all_trades, all_var_es, all_pnl, all_logs, all_quality, all_sla = [], [], [], [], [], []
@@ -718,7 +718,7 @@ def main():
             skipped_days += 1
         current += timedelta(days=1)
 
-    log.info(f"  Daily data loop done: processed_days={processed_days} skipped_weekend={skipped_days}")
+    log.info(f"[bronze→ingest] Daily data generation complete | processed_days={processed_days} | skipped_weekend={skipped_days}")
 
     trades_df = pd.concat(all_trades)
     var_es_df = pd.concat(all_var_es)
@@ -727,7 +727,7 @@ def main():
     quality_df= pd.concat(all_quality)
     sla_df    = pd.concat(all_sla)
 
-    log.info(f"  Writing parquet files to {out}")
+    log.info(f"[bronze→ingest] Writing parquet files | output_dir={out}")
     trades_df.to_parquet(out  / "trades.parquet",        index=False)
     var_es_df.to_parquet(out  / "var_es.parquet",        index=False)
     pnl_df.to_parquet(out     / "pnl_vectors.parquet",   index=False)
@@ -745,17 +745,18 @@ def main():
     nodes.to_parquet(out / "lineage_nodes.parquet", index=False)
     edges.to_parquet(out / "lineage_edges.parquet", index=False)
 
-    log.info(f"← main (generate) done:")
-    log.info(f"  trades.parquet        → {len(trades_df):,} rows")
-    log.info(f"  var_es.parquet        → {len(var_es_df):,} rows")
-    log.info(f"  pnl_vectors.parquet   → {len(pnl_df):,} rows")
-    log.info(f"  pipeline_logs.parquet → {len(logs_df):,} rows")
-    log.info(f"  quality_scores.parquet→ {len(quality_df):,} rows")
-    log.info(f"  sla_status.parquet    → {len(sla_df):,} rows")
-    log.info(f"  ownership.parquet     → {len(ownership_df):,} rows")
-    log.info(f"  assets.parquet        → {len(assets_df):,} rows")
-    log.info(f"  lineage_nodes.parquet → {len(nodes):,} rows")
-    log.info(f"  lineage_edges.parquet → {len(edges):,} rows")
+    total_rows = sum([len(trades_df), len(var_es_df), len(pnl_df), len(logs_df), len(quality_df), len(sla_df), len(ownership_df), len(assets_df), len(nodes), len(edges)])
+    log.info(f"[bronze→ingest] ✓ Synthetic generation complete | program=generate.py | total_rows={total_rows:,}")
+    log.info(f"[bronze→ingest]   trades.parquet         → {len(trades_df):,} rows")
+    log.info(f"[bronze→ingest]   var_es.parquet         → {len(var_es_df):,} rows")
+    log.info(f"[bronze→ingest]   pnl_vectors.parquet    → {len(pnl_df):,} rows")
+    log.info(f"[bronze→ingest]   pipeline_logs.parquet  → {len(logs_df):,} rows")
+    log.info(f"[bronze→ingest]   quality_scores.parquet → {len(quality_df):,} rows")
+    log.info(f"[bronze→ingest]   sla_status.parquet     → {len(sla_df):,} rows")
+    log.info(f"[bronze→ingest]   ownership.parquet      → {len(ownership_df):,} rows")
+    log.info(f"[bronze→ingest]   assets.parquet         → {len(assets_df):,} rows")
+    log.info(f"[bronze→ingest]   lineage_nodes.parquet  → {len(nodes):,} rows")
+    log.info(f"[bronze→ingest]   lineage_edges.parquet  → {len(edges):,} rows")
 
 
 if __name__ == "__main__":

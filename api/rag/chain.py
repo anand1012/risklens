@@ -150,7 +150,7 @@ async def _is_relevant(query: str, api_key: str) -> bool:
     Binary relevance check using Haiku.
     Runs concurrently with retrieve() so on-topic queries pay zero extra latency.
     """
-    logger.info("→ _is_relevant called", extra={"json_fields": {"query_preview": query[:80], "model": _HAIKU_MODEL}})
+    logger.info("[rag] Relevance classifier starting | model=%s | query=%s", _HAIKU_MODEL, query[:80], extra={"json_fields": {"query_preview": query[:80], "model": _HAIKU_MODEL}})
     llm = ChatAnthropic(
         model=_HAIKU_MODEL,
         anthropic_api_key=api_key,
@@ -159,7 +159,7 @@ async def _is_relevant(query: str, api_key: str) -> bool:
     response = await llm.ainvoke([HumanMessage(content=_RELEVANCE_PROMPT + query)])
     text = _extract_text(response.content).strip().upper()
     result = text.startswith("Y")
-    logger.info("← _is_relevant done", extra={"json_fields": {"relevant": result, "classifier_response": text[:20]}})
+    logger.info("[rag] Relevance classifier done | relevant=%s | response=%s | model=%s | query=%s", result, text[:20], _HAIKU_MODEL, query[:80], extra={"json_fields": {"relevant": result, "classifier_response": text[:20]}})
     return result
 
 
@@ -171,16 +171,17 @@ def _run_bq_query(bq_client: bigquery.Client, project: str, sql: str,
                   max_rows: int = 30) -> str:
     """Execute a read-only BQ query, return results as a plain-text table."""
     import time as _time
+    sql_preview = sql.strip()[:200]
     logger.info(
-        "→ _run_bq_query called",
-        extra={"json_fields": {"sql_preview": sql.strip()[:500], "max_rows": max_rows}},
+        "[rag] BQ tool call executing | sql=%s | max_rows=%d",
+        sql_preview, max_rows,
+        extra={"json_fields": {"sql_preview": sql_preview, "max_rows": max_rows}},
     )
     sql_upper = sql.strip().upper()
     if not (sql_upper.startswith("SELECT") or sql_upper.startswith("WITH")):
-        logger.warning("_run_bq_query rejected non-SELECT query: %.100s", sql.strip())
+        logger.warning("[rag] BQ tool rejected non-SELECT query | sql=%s", sql.strip()[:100])
         return "Error: only SELECT/WITH queries are permitted."
     if "LIMIT" not in sql_upper:
-        logger.debug("_run_bq_query: no LIMIT clause found — appending LIMIT %d", max_rows)
         sql = sql.rstrip("; ") + f" LIMIT {max_rows}"
 
     t0 = _time.monotonic()
@@ -188,10 +189,11 @@ def _run_bq_query(bq_client: bigquery.Client, project: str, sql: str,
         rows = list(bq_client.query(sql).result())
     except Exception as exc:
         latency_ms = int((_time.monotonic() - t0) * 1000)
-        logger.warning(
-            "BQ query failed after %dms: %s",
-            latency_ms, exc,
-            extra={"json_fields": {"sql_preview": sql.strip()[:500], "latency_ms": latency_ms}},
+        logger.error(
+            "[rag] FAILED: BQ tool query error | latency_ms=%d | sql=%s | error=%s",
+            latency_ms, sql_preview, exc,
+            exc_info=True,
+            extra={"json_fields": {"sql_preview": sql_preview, "latency_ms": latency_ms}},
         )
         return f"Query error: {exc}"
 
@@ -199,8 +201,9 @@ def _run_bq_query(bq_client: bigquery.Client, project: str, sql: str,
 
     if not rows:
         logger.warning(
-            "_run_bq_query returned 0 rows",
-            extra={"json_fields": {"latency_ms": latency_ms, "sql_preview": sql.strip()[:200]}},
+            "[rag] BQ tool returned 0 rows | latency_ms=%d | sql=%s",
+            latency_ms, sql_preview,
+            extra={"json_fields": {"latency_ms": latency_ms, "sql_preview": sql_preview}},
         )
         return "Query returned no rows."
 
@@ -215,7 +218,8 @@ def _run_bq_query(bq_client: bigquery.Client, project: str, sql: str,
     if len(rows) >= max_rows:
         result += f"\n({max_rows} rows shown)"
     logger.info(
-        "← _run_bq_query done",
+        "[rag] ✓ BQ tool query complete | rows=%d | cols=%d | latency_ms=%d | sql=%s",
+        len(rows), len(fields), latency_ms, sql_preview,
         extra={"json_fields": {"row_count": len(rows), "latency_ms": latency_ms, "col_count": len(fields)}},
     )
     return result
@@ -310,15 +314,15 @@ async def stream_answer(
     for on-topic queries.
     """
     logger.info(
-        "→ stream_answer called",
+        "[rag] stream_answer starting | query=%s | top_k=%d | model=%s",
+        query[:80], top_k, _MODEL,
         extra={"json_fields": {"query_preview": query[:80], "top_k": top_k}},
     )
     ant_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not ant_key:
-        logger.error("ANTHROPIC_API_KEY not set — cannot stream answer")
+        logger.error("[rag] ANTHROPIC_API_KEY not set — cannot stream answer")
         raise ValueError("ANTHROPIC_API_KEY not set")
 
-    logger.debug("Launching parallel relevance check + retrieval")
     # Run relevance classifier and retrieval concurrently
     relevant, docs = await asyncio.gather(
         _is_relevant(query, ant_key),
@@ -333,18 +337,19 @@ async def stream_answer(
         ),
     )
     logger.info(
-        "Parallel gather complete",
+        "[rag] Parallel classify+retrieve complete | relevant=%s | docs_retrieved=%d | query=%s",
+        relevant, len(docs), query[:80],
         extra={"json_fields": {"relevant": relevant, "retrieved_doc_count": len(docs)}},
     )
 
     if not relevant:
-        logger.info("Query classified off-topic — returning decline message")
+        logger.info("[rag] Query classified off-topic | returning decline | query=%s", query[:80])
         yield f"data: __sources__{json.dumps([])}\n\n"
         yield f"data: {json.dumps(_DECLINE_MESSAGE)}\n\n"
         yield "data: __done__\n\n"
         return
 
-    logger.info("Retrieved %d docs for query: %.80s", len(docs), query)
+    logger.info("[rag] Query on-topic | docs_retrieved=%d | query=%s", len(docs), query[:80])
 
     context_block = _build_context_block(docs)
     user_message = (
@@ -358,7 +363,7 @@ async def stream_answer(
     )
     llm_with_tools = llm.bind_tools([_BQ_TOOL_DEF])
 
-    logger.debug("Emitting sources payload for %d docs", len(docs))
+    logger.info("[rag] Emitting sources payload | docs=%d | query=%s", len(docs), query[:80])
     yield f"data: __sources__{_sources_payload(docs)}\n\n"
 
     run_cfg = {
@@ -371,7 +376,7 @@ async def stream_answer(
     )
 
     # ── Phase 1: stream with tools ────────────────────────────────────────────
-    logger.info("Starting Phase 1 streaming with tools", extra={"json_fields": {"model": _MODEL}})
+    logger.info("[rag] Phase 1 streaming starting | model=%s | tools=query_bigquery | query=%s", _MODEL, query[:80], extra={"json_fields": {"model": _MODEL}})
     chunks: list = []
     text_yielded = False
 
@@ -392,13 +397,13 @@ async def stream_answer(
                 text_yielded = True
                 yield f"data: {json.dumps(token)}\n\n"
         logger.info(
-            "Phase 1 stream complete",
+            "[rag] Phase 1 stream complete | chunks=%d | text_yielded=%s | query=%s",
+            len(chunks), text_yielded, query[:80],
             extra={"json_fields": {"chunk_count": len(chunks), "text_yielded": text_yielded}},
         )
     except Exception as exc:
-        logger.error("Phase 1 stream error: %s", exc, exc_info=True)
+        logger.error("[rag] FAILED: Phase 1 stream error | query=%s | error=%s", query[:80], exc, exc_info=True)
         if not text_yielded:
-            logger.warning("Phase 1 yielded nothing — activating fallback")
             async for tok in _fallback_answer(messages, ant_key, run_cfg):
                 yield tok
         yield "data: __done__\n\n"
@@ -421,13 +426,15 @@ async def stream_answer(
             tc = tool_calls[0]
             sql = tc.get("args", {}).get("sql", "")
             logger.info(
-                "BQ tool call detected",
+                "[rag] BQ tool call detected | sql=%s | tool_call_id=%s | query=%s",
+                sql[:200], tc.get("id"), query[:80],
                 extra={"json_fields": {"sql_preview": sql[:300], "tool_call_id": tc.get("id")}},
             )
 
             tool_result = _run_bq_query(bq_client, project, sql)
             logger.info(
-                "BQ tool result ready",
+                "[rag] BQ tool result ready | result_length=%d | query=%s",
+                len(tool_result), query[:80],
                 extra={"json_fields": {"result_preview": tool_result[:200]}},
             )
 
@@ -435,7 +442,7 @@ async def stream_answer(
                 full_msg,
                 ToolMessage(content=tool_result, tool_call_id=tc["id"]),
             ]
-            logger.info("Starting Phase 2 streaming (continuation after tool call)")
+            logger.info("[rag] Phase 2 streaming starting (continuation after BQ tool) | model=%s | query=%s", _MODEL, query[:80])
             phase2_yielded = False
             try:
                 async for chunk in plain_llm.astream(follow_up, config=run_cfg):
@@ -452,13 +459,13 @@ async def stream_answer(
                     if token:
                         phase2_yielded = True
                         yield f"data: {json.dumps(token)}\n\n"
-                logger.info("Phase 2 stream complete", extra={"json_fields": {"phase2_yielded": phase2_yielded}})
+                logger.info("[rag] Phase 2 stream complete | yielded=%s | query=%s", phase2_yielded, query[:80])
             except Exception as exc:
-                logger.error("Phase 2 stream error: %s", exc, exc_info=True)
+                logger.error("[rag] FAILED: Phase 2 stream error | query=%s | error=%s", query[:80], exc, exc_info=True)
 
             # Phase 2 produced nothing — build a plain answer from tool result
             if not phase2_yielded:
-                logger.warning("Phase 2 yielded nothing — falling back to plain answer")
+                logger.warning("[rag] Phase 2 yielded nothing — falling back | query=%s", query[:80])
                 fallback_msgs = messages + [
                     HumanMessage(content=(
                         f"Here is the query result:\n{tool_result}\n\n"
@@ -468,9 +475,9 @@ async def stream_answer(
                 async for tok in _fallback_answer(fallback_msgs, ant_key, run_cfg):
                     yield tok
         else:
-            logger.debug("No tool calls in Phase 1 response — no Phase 2 needed")
+            logger.info("[rag] No BQ tool calls in Phase 1 response | query=%s", query[:80])
 
-    logger.info("← stream_answer done", extra={"json_fields": {"query_preview": query[:80]}})
+    logger.info("[rag] ✓ stream_answer complete | query=%s", query[:80])
     yield "data: __done__\n\n"
 
 

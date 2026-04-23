@@ -51,7 +51,8 @@ def _bq_vector_search(
     Uses BigQuery VECTOR_SEARCH with cosine distance.
     """
     logger.info(
-        "→ _bq_vector_search called",
+        "[rag] Vector search starting | table=risklens_embeddings.vectors | top_k=%d | embedding_dim=%d",
+        top_k, len(query_embedding),
         extra={"json_fields": {"top_k": top_k, "embedding_dim": len(query_embedding)}},
     )
     # Flatten embedding to a SQL ARRAY literal
@@ -70,23 +71,24 @@ def _bq_vector_search(
         )
         ORDER BY distance ASC
     """
-    logger.debug("BQ vector search SQL (truncated): %.200s", sql.strip()[:200])
     t0 = time.monotonic()
     results = []
     try:
         for row in bq_client.query(sql).result():
             results.append((row.chunk_id, float(row.distance)))
         latency_ms = int((time.monotonic() - t0) * 1000)
+        top_dist = round(results[0][1], 4) if results else None
         logger.info(
-            "← _bq_vector_search done",
-            extra={"json_fields": {"hit_count": len(results), "latency_ms": latency_ms}},
+            "[rag] ✓ Vector search complete | table=risklens_embeddings.vectors | hits=%d | top_distance=%.4f | latency_ms=%d",
+            len(results), top_dist or 0.0, latency_ms,
+            extra={"json_fields": {"hit_count": len(results), "top_distance": top_dist, "latency_ms": latency_ms}},
         )
         if not results:
-            logger.warning("_bq_vector_search returned 0 hits")
+            logger.warning("[rag] Vector search returned 0 hits | table=risklens_embeddings.vectors | top_k=%d", top_k)
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
         logger.warning(
-            "BQ vector search failed after %dms: %s",
+            "[rag] FAILED: Vector search error | table=risklens_embeddings.vectors | latency_ms=%d | error=%s",
             latency_ms, e,
             extra={"json_fields": {"latency_ms": latency_ms}},
         )
@@ -109,7 +111,8 @@ def _rrf_merge(
     vector_chunk_ids:  [(chunk_id, distance), ...]    ranked 1..M (lower distance = better)
     """
     logger.info(
-        "→ _rrf_merge called",
+        "[rag] RRF merge starting | bm25_hits=%d | vector_hits=%d | top_k=%d | rrf_k=%d",
+        len(bm25_results), len(vector_chunk_ids), top_k, _RRF_K,
         extra={"json_fields": {
             "bm25_count": len(bm25_results),
             "vector_count": len(vector_chunk_ids),
@@ -125,7 +128,6 @@ def _rrf_merge(
         scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (_RRF_K + rank)
 
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
-    logger.debug("RRF scored %d unique chunks, taking top %d", len(scores), top_k)
 
     results = []
     missing = 0
@@ -138,10 +140,12 @@ def _rrf_merge(
             logger.debug("RRF: chunk_id %s not found in corpus_by_id", chunk_id)
 
     if missing:
-        logger.warning("_rrf_merge: %d chunk_ids not found in corpus", missing)
+        logger.warning("[rag] RRF merge: %d chunk_ids not found in corpus", missing)
+    top_rrf = round(ranked[0][1], 4) if ranked else 0.0
     logger.info(
-        "← _rrf_merge done",
-        extra={"json_fields": {"merged_count": len(results), "missing_chunks": missing}},
+        "[rag] ✓ RRF merge complete | unique_scored=%d | merged_returned=%d | top_rrf_score=%.4f | missing_chunks=%d",
+        len(scores), len(results), top_rrf, missing,
+        extra={"json_fields": {"merged_count": len(results), "missing_chunks": missing, "top_rrf_score": top_rrf}},
     )
     return results
 
@@ -173,7 +177,8 @@ def retrieve(
         List of RetrievedDoc sorted by RRF score descending
     """
     logger.info(
-        "→ retrieve called",
+        "[rag] Hybrid retrieval starting | query=%s | top_k=%d | corpus_size=%d | method=BM25+vector→RRF",
+        query[:80], top_k, len(corpus),
         extra={"json_fields": {
             "query_preview": query[:80],
             "top_k": top_k,
@@ -181,30 +186,31 @@ def retrieve(
         }},
     )
     fetch_k = top_k * 3  # fetch more candidates before merging
-    logger.debug("Fetching %d candidates (3× top_k=%d)", fetch_k, top_k)
 
     # BM25 retrieval
     t_bm25 = time.monotonic()
     bm25_results = bm25_search(bm25_index, corpus, query, top_k=fetch_k)
     bm25_ms = int((time.monotonic() - t_bm25) * 1000)
+    bm25_top_score = round(bm25_results[0][1], 4) if bm25_results else 0.0
     logger.info(
-        "BM25 retrieval done",
-        extra={"json_fields": {"bm25_hits": len(bm25_results), "latency_ms": bm25_ms}},
+        "[rag] BM25 retrieval complete | hits=%d | top_score=%.4f | latency_ms=%d | query=%s",
+        len(bm25_results), bm25_top_score, bm25_ms, query[:80],
+        extra={"json_fields": {"bm25_hits": len(bm25_results), "bm25_top_score": bm25_top_score, "latency_ms": bm25_ms}},
     )
     if not bm25_results:
-        logger.warning("BM25 returned 0 hits for query: %.80s", query)
+        logger.warning("[rag] BM25 returned 0 hits | query=%s", query[:80])
 
     # Vector retrieval (Vertex AI embed_query uses Workload Identity — no key needed)
     t_embed = time.monotonic()
     query_emb = embed_query(query, project=project)
     embed_ms = int((time.monotonic() - t_embed) * 1000)
-    logger.info("Query embedding done", extra={"json_fields": {"embed_dim": len(query_emb), "latency_ms": embed_ms}})
+    logger.info("[rag] Query embedding complete | embed_dim=%d | latency_ms=%d", len(query_emb), embed_ms,
+                extra={"json_fields": {"embed_dim": len(query_emb), "latency_ms": embed_ms}})
 
     vector_results = _bq_vector_search(query_emb, project, fetch_k, bq_client)
 
     # Build corpus lookup
     corpus_by_id = {c.chunk_id: c for c in corpus}
-    logger.debug("Corpus lookup built: %d entries", len(corpus_by_id))
 
     # Merge
     merged = _rrf_merge(bm25_results, vector_results, corpus_by_id, top_k=top_k)
@@ -221,13 +227,15 @@ def retrieve(
         )
         for doc, score in merged
     ]
+    top_score = round(docs[0].score, 4) if docs else None
     logger.info(
-        "← retrieve done",
+        "[rag] ✓ Hybrid retrieval complete | returned=%d | top_rrf_score=%.4f | bm25_hits=%d | vector_hits=%d | query=%s",
+        len(docs), top_score or 0.0, len(bm25_results), len(vector_results), query[:80],
         extra={"json_fields": {
             "returned_count": len(docs),
-            "top_score": round(docs[0].score, 4) if docs else None,
+            "top_score": top_score,
         }},
     )
     if not docs:
-        logger.warning("retrieve returned 0 docs for query: %.80s", query)
+        logger.warning("[rag] retrieve returned 0 docs | query=%s | bm25_hits=%d | vector_hits=%d", query[:80], len(bm25_results), len(vector_results))
     return docs

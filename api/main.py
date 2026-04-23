@@ -42,57 +42,64 @@ _GCS_BUCKET = os.environ.get("GCS_BUCKET", "risklens-frtb-2026-indexes")
 
 def _init_langsmith() -> None:
     """Enable LangSmith tracing if env vars are present."""
-    logger.info("→ _init_langsmith called")
     if os.environ.get("LANGCHAIN_TRACING_V2", "").lower() != "true":
-        logger.info("LangSmith tracing disabled (set LANGCHAIN_TRACING_V2=true to enable)")
+        logger.info("[api] LangSmith tracing disabled | set LANGCHAIN_TRACING_V2=true to enable")
         return
     if not os.environ.get("LANGCHAIN_API_KEY"):
-        logger.warning("LANGCHAIN_TRACING_V2=true but LANGCHAIN_API_KEY is not set — tracing skipped")
+        logger.warning("[api] LangSmith: LANGCHAIN_TRACING_V2=true but LANGCHAIN_API_KEY not set — tracing skipped")
         return
     # Default project name so traces are grouped under "risklens" in the UI
     os.environ.setdefault("LANGCHAIN_PROJECT", "risklens")
     try:
         LangSmithClient()  # validates the key at startup
         logger.info(
-            "LangSmith tracing enabled → project: %s",
+            "[api] LangSmith tracing enabled | project=%s",
             os.environ["LANGCHAIN_PROJECT"],
         )
     except Exception as e:
-        logger.warning("LangSmith init failed: %s", e)
-    logger.info("← _init_langsmith done")
+        logger.warning("[api] LangSmith init failed | error=%s", e)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("→ lifespan startup called", extra={"json_fields": {"gcs_bucket": _GCS_BUCKET}})
+    pod      = os.getenv("HOSTNAME",        "unknown")
+    ns       = os.getenv("POD_NAMESPACE",   "unknown")
+    node     = os.getenv("NODE_NAME",       "unknown")
+    image    = os.getenv("IMAGE_TAG",       "unknown")
+    project  = os.getenv("GCP_PROJECT",     "risklens-frtb-2026")
+    logger.info(
+        "[k8s] Pod starting | pod=%s | namespace=%s | node=%s | image=%s | project=%s | gcs_bucket=%s",
+        pod, ns, node, image, project, _GCS_BUCKET,
+        extra={"json_fields": {"pod": pod, "namespace": ns, "node": node, "image": image, "gcs_bucket": _GCS_BUCKET}},
+    )
     _init_langsmith()
 
-    logger.debug("Initializing BigQuery client")
     app.state.bq_client = get_client()
     logger.info(
-        "← BigQuery client ready",
+        "[api] ✓ BigQuery client initialized | project=%s",
+        app.state.bq_client.project,
         extra={"json_fields": {"project": app.state.bq_client.project}},
     )
 
     logger.info(
-        "Loading BM25 index from GCS",
+        "[api] Loading BM25 index from GCS | bucket=%s | path=indexes/",
+        _GCS_BUCKET,
         extra={"json_fields": {"bucket": _GCS_BUCKET, "path": "indexes/"}},
     )
     bm25, corpus = load_from_gcs(bucket=_GCS_BUCKET)
     app.state.bm25_index = bm25
     app.state.bm25_corpus = corpus
     logger.info(
-        "← BM25 index ready",
+        "[api] ✓ BM25 index loaded | chunks=%d | bucket=%s",
+        len(corpus), _GCS_BUCKET,
         extra={"json_fields": {"doc_count": len(corpus)}},
     )
 
-    logger.info("Registering middleware: CORSMiddleware, RequestLoggingMiddleware")
-    logger.info("Registering routers: catalog, lineage, governance, risk, search, chat")
-    logger.info("RiskLens API startup complete")
+    logger.info("[api] ✓ RiskLens API startup complete | routers=catalog,lineage,governance,risk,search,chat | middleware=CORS,RequestLogging | pod=%s | bm25_chunks=%d", pod, len(corpus))
 
     yield
 
-    logger.info("← lifespan shutdown: RiskLens API stopped")
+    logger.info("[api] RiskLens API shutdown | pod=%s", pod)
 
 
 app = FastAPI(
@@ -120,8 +127,7 @@ app.include_router(chat.router,       prefix="/api")
 
 @app.get("/health", tags=["meta"])
 def health():
-    logger.info("→ health called")
     bm25_docs = len(app.state.bm25_corpus) if hasattr(app.state, "bm25_corpus") else 0
     result = {"status": "ok", "bm25_docs": bm25_docs}
-    logger.info("← health done", extra={"json_fields": result})
+    logger.info("[api] GET /health | status=ok | bm25_chunks=%d", bm25_docs, extra={"json_fields": result})
     return result

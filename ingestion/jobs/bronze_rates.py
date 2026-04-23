@@ -87,24 +87,24 @@ BRONZE_SCHEMA = StructType([
 
 def get_fred_api_key(project: str) -> str:
     """Fetch FRED API key from GCP Secret Manager."""
-    log.info(f"→ get_fred_api_key called: project={project}")
+    log.info(f"[bronze→ingest] Fetching FRED API key | secret=risklens-fred-api-key | project={project} | program=bronze_rates.py")
     client = secretmanager.SecretManagerServiceClient()
     name   = f"projects/{project}/secrets/risklens-fred-api-key/versions/latest"
     try:
         resp   = client.access_secret_version(request={"name": name})
         key = resp.payload.data.decode("utf-8").strip()
-        log.info("← get_fred_api_key done: key retrieved (length=%d)", len(key))
+        log.info(f"[bronze→ingest] FRED API key retrieved | key_length={len(key)} | secret=risklens-fred-api-key")
         return key
     except Exception as e:
-        log.error(f"get_fred_api_key: failed to retrieve key: {e}", exc_info=True)
+        log.error(f"[bronze→ingest] FAILED: Could not retrieve FRED API key | secret=risklens-fred-api-key | project={project} | error={e}", exc_info=True)
         raise
 
 
 def fetch_series(fred: Fred, series_id: str, start_date: datetime, end_date: datetime) -> list[dict]:
     """Fetch a single FRED series and return as list of dicts."""
-    log.info(f"→ fetch_series called: series_id={series_id} start={start_date.date()} end={end_date.date()}")
+    meta = FRED_SERIES[series_id]
+    log.info(f"[bronze→ingest] Fetching FRED series | series_id={series_id} | name={meta['name']} | domain={meta['domain']} | frequency={meta['frequency']} | start={start_date.date()} | end={end_date.date()} | program=bronze_rates.py")
     try:
-        meta   = FRED_SERIES[series_id]
         data   = fred.get_series(
             series_id,
             observation_start=start_date.strftime("%Y-%m-%d"),
@@ -126,23 +126,23 @@ def fetch_series(fred: Fred, series_id: str, start_date: datetime, end_date: dat
                 "ingested_at": datetime.utcnow(),
                 "trade_date":  end_date.strftime("%Y-%m-%d"),
             })
-        log.info(f"← fetch_series done: {series_id}: {len(rows)} observations, {null_values} null/missing")
+        log.info(f"[bronze→ingest] ✓ FRED series fetched | series_id={series_id} | observations={len(rows)} | null_missing={null_values} | date_range={start_date.date()}→{end_date.date()}")
         if null_values > 0:
-            log.debug(f"  {series_id}: {null_values} missing observations (FRED '.' values)")
+            log.debug(f"[bronze→ingest] {series_id}: {null_values} missing observations (FRED '.' sentinel values in date range)")
         return rows
     except Exception as e:
-        log.error(f"  Failed to fetch {series_id}: {e}", exc_info=True)
+        log.error(f"[bronze→ingest] FAILED: FRED API call failed | series_id={series_id} | name={meta['name']} | error={e}", exc_info=True)
         return []
 
 
 def main():
-    log.info("→ main (bronze_rates) called")
+    log.info(f"[bronze→ingest] Pipeline starting | program=bronze_rates.py | target=risklens_bronze.rates_r | series_count={len(FRED_SERIES)}")
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--bucket",  required=True)
     parser.add_argument("--days",    type=int, default=1)
     args = parser.parse_args()
-    log.info(f"  args: project={args.project} bucket={args.bucket} days={args.days}")
+    log.info(f"[bronze→ingest] Args | project={args.project} | bucket={args.bucket} | days={args.days} | table=risklens_bronze.rates_r")
 
     spark = (
         SparkSession.builder
@@ -155,7 +155,7 @@ def main():
     end_date   = datetime.utcnow()
     start_date = end_date - timedelta(days=args.days + 5)  # +5 buffer for non-trading days
 
-    log.info(f"Fetching FRED series from {start_date.date()} to {end_date.date()} ({len(FRED_SERIES)} series)")
+    log.info(f"[bronze→ingest] Fetching {len(FRED_SERIES)} FRED series | start={start_date.date()} | end={end_date.date()} | series={list(FRED_SERIES.keys())} | program=bronze_rates.py")
 
     fred_key = get_fred_api_key(args.project)
     fred     = Fred(api_key=fred_key)
@@ -167,16 +167,16 @@ def main():
         series_results[series_id] = len(rows)
         all_rows.extend(rows)
 
-    log.info(f"  Series fetch complete: {len(series_results)} series, {len(all_rows):,} total rows")
+    log.info(f"[bronze→ingest] FRED fetch complete | series_fetched={len(series_results)} | total_rows={len(all_rows):,} | per_series={series_results}")
 
     if not all_rows:
-        log.warning("No FRED data fetched — skipping BigQuery write.")
+        log.warning(f"[bronze→ingest] No FRED data fetched for any series | date_range={start_date.date()}→{end_date.date()} | skipping risklens_bronze.rates_r write")
         spark.stop()
         return
 
     df = spark.createDataFrame(all_rows, schema=BRONZE_SCHEMA)
     row_count = df.count()
-    log.info(f"Writing {row_count:,} rows to BigQuery risklens_bronze.rates_r")
+    log.info(f"[bronze→ingest] Writing to BigQuery | table=risklens_bronze.rates_r | rows={row_count:,} | partition=date | cluster=series_id,domain | mode=append")
 
     (
         df.write
@@ -193,7 +193,7 @@ def main():
         .save()
     )
 
-    log.info(f"← main (bronze_rates) done: {row_count:,} rows written to risklens_bronze.rates_r")
+    log.info(f"[bronze→ingest] ✓ Written {row_count:,} rows → risklens_bronze.rates_r | series={len(FRED_SERIES)} | date_range={start_date.date()}→{end_date.date()} | next=silver_transform.py")
     spark.stop()
 
 

@@ -15,6 +15,7 @@ Skips /health to avoid noise from k8s liveness/readiness probes.
 """
 
 import logging
+import os
 import time
 
 from fastapi import Request, Response
@@ -65,6 +66,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                         "http.ip":         request.client.host if request.client else None,
                         "http.user_agent": request.headers.get("user-agent"),
                         "http.session_id": request.headers.get("x-session-id"),
+                        "k8s.pod":         os.getenv("HOSTNAME",       "unknown"),
+                        "k8s.namespace":   os.getenv("POD_NAMESPACE",  "unknown"),
                     }
                 },
             )

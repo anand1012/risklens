@@ -95,9 +95,9 @@ BRONZE_TABLES = {
 def write_to_bigquery(spark: SparkSession, df_pd: pd.DataFrame,
                       table: str, project: str, bucket: str, mode: str = "overwrite"):
     """Convert pandas DataFrame to Spark and write to BigQuery."""
-    log.info(f"→ write_to_bigquery called: table={table} rows={len(df_pd)} mode={mode}")
+    log.info(f"[bronze→ingest] Writing synthetic table | table={table} | rows={len(df_pd):,} | mode={mode} | program=bronze_synthetic.py")
     if df_pd.empty:
-        log.warning(f"  Empty DataFrame for {table} — skipping.")
+        log.warning(f"[bronze→ingest] Empty DataFrame — skipping write | table={table} | mode={mode}")
         return
 
     # Convert list/dict columns to JSON strings for BigQuery compatibility
@@ -147,10 +147,10 @@ def write_to_bigquery(spark: SparkSession, df_pd: pd.DataFrame,
                 df_pd[col] = pd.to_datetime(df_pd[col])
 
     dataset, table_name = table.split(".")
-    log.debug(f"  write_to_bigquery: creating Spark DataFrame for {table}")
+    log.debug(f"[bronze→ingest] Creating Spark DataFrame | table={table} | pandas_rows={len(df_pd):,}")
     df_spark = spark.createDataFrame(df_pd)
     row_count = df_spark.count()
-    log.debug(f"  write_to_bigquery: writing {row_count:,} rows to {table}")
+    log.debug(f"[bronze→ingest] Spark row count confirmed | table={table} | rows={row_count:,}")
 
     (
         df_spark.write
@@ -163,7 +163,7 @@ def write_to_bigquery(spark: SparkSession, df_pd: pd.DataFrame,
         .mode(mode)
         .save()
     )
-    log.info(f"← write_to_bigquery done: {table}: {row_count:,} rows written (mode={mode})")
+    log.info(f"[bronze→ingest] ✓ Written {row_count:,} rows → {table} | mode={mode} | program=bronze_synthetic.py")
 
 
 def load_market_params(spark: SparkSession, project: str,
@@ -175,7 +175,7 @@ def load_market_params(spark: SparkSession, project: str,
     Falls back to neutral defaults (SOFR=5, VIX=20, HY=3.5) for any missing date
     so synthetic generation always succeeds even with sparse real data.
     """
-    log.info(f"→ load_market_params called: start={start_date.date()} end={end_date.date()}")
+    log.info(f"[bronze→ingest] Loading market params for synthetic seeding | source=risklens_bronze.rates_r | series=SOFR,DFF,VIXCLS,BAMLH0A0HYM2 | start={start_date.date()} | end={end_date.date()}")
     start_str = start_date.strftime("%Y-%m-%d")
     end_str   = end_date.strftime("%Y-%m-%d")
 
@@ -198,9 +198,9 @@ def load_market_params(spark: SparkSession, project: str,
             )
         )
         rows = df.collect()
-        log.info(f"  Loaded {len(rows)} market param rows from bronze.rates_r")
+        log.info(f"[bronze→ingest] Market params loaded | rows={len(rows)} | source=risklens_bronze.rates_r | date_range={start_date.date()}→{end_date.date()}")
     except Exception as e:
-        log.warning(f"  Could not read bronze.rates_r for seeding: {e}. Using neutral defaults.")
+        log.warning(f"[bronze→ingest] Could not read risklens_bronze.rates_r for market seeding | error={e} | falling_back=neutral_defaults (SOFR=5.0,VIX=20.0,HY=3.5)")
         return {}
 
     # Build per-date param dict
@@ -233,18 +233,18 @@ def load_market_params(spark: SparkSession, project: str,
         params[d] = dict(last_known)
         current += timedelta(days=1)
 
-    log.info(f"← load_market_params done: params ready for {len(params)} dates")
+    log.info(f"[bronze→ingest] Market params ready | dates_covered={len(params)} | date_range={start_date.date()}→{end_date.date()} | forward_filled=true")
     return params
 
 
 def main():
-    log.info("→ main (bronze_synthetic) called")
+    log.info(f"[bronze→ingest] Pipeline starting | program=bronze_synthetic.py | targets={list(BRONZE_TABLES.values())}")
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--bucket",  required=True)
     parser.add_argument("--days",    type=int, default=1)
     args = parser.parse_args()
-    log.info(f"  args: project={args.project} bucket={args.bucket} days={args.days}")
+    log.info(f"[bronze→ingest] Args | project={args.project} | bucket={args.bucket} | days={args.days}")
 
     spark = (
         SparkSession.builder
@@ -257,10 +257,10 @@ def main():
     end_date   = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     start_date = end_date - timedelta(days=args.days)
 
-    log.info(f"Generating synthetic data for {args.days} days ({start_date.date()} to {end_date.date()})")
+    log.info(f"[bronze→ingest] Generating synthetic data | days={args.days} | start={start_date.date()} | end={end_date.date()} | program=bronze_synthetic.py")
 
     # ── Load real market params to seed synthetic risk numbers ────────────────
-    log.info("Loading market params from bronze.rates_r...")
+    log.info(f"[bronze→ingest] Loading real market params from risklens_bronze.rates_r to seed synthetic risk numbers | date_range={start_date.date()}→{end_date.date()}")
     market_params = load_market_params(spark, args.project, start_date, end_date)
 
     # ── Daily data (generated per trading day) ────────────────────────────────
@@ -284,56 +284,56 @@ def main():
             skipped_weekend += 1
         current += timedelta(days=1)
 
-    log.info(f"  Daily data generated: processed_days={processed_days} skipped_weekend={skipped_weekend}")
+    log.info(f"[bronze→ingest] Daily data generation complete | processed_days={processed_days} | skipped_weekend={skipped_weekend}")
 
     if all_var_es:
         risk_df = pd.concat(all_var_es + all_pnl, ignore_index=True)
-        log.info(f"Writing risk outputs ({len(risk_df):,} rows)...")
+        log.info(f"[bronze→ingest] Writing VaR/ES + P&L vectors | table=risklens_bronze.risk_outputs_s | rows={len(risk_df):,} | days={processed_days}")
         write_to_bigquery(spark, risk_df, "risklens_bronze.risk_outputs_s", args.project, args.bucket)
     else:
-        log.warning("  No risk output rows generated — skipping risk_outputs_s write")
+        log.warning(f"[bronze→ingest] No risk output rows generated — skipping risklens_bronze.risk_outputs_s write | processed_days={processed_days}")
 
     if all_logs:
         logs_df = pd.concat(all_logs, ignore_index=True)
-        log.info(f"Writing pipeline logs ({len(logs_df):,} rows)...")
+        log.info(f"[bronze→ingest] Writing pipeline job logs | table=risklens_bronze.pipeline_logs_s | rows={len(logs_df):,} | days={processed_days}")
         write_to_bigquery(spark, logs_df, "risklens_bronze.pipeline_logs_s", args.project, args.bucket)
 
     if all_quality:
         quality_df = pd.concat(all_quality, ignore_index=True)
-        log.info(f"Writing quality scores ({len(quality_df):,} rows)...")
+        log.info(f"[bronze→ingest] Writing quality scores | table=risklens_catalog.quality_scores | rows={len(quality_df):,} | assets_per_day={len(quality_df)//max(processed_days,1)}")
         write_to_bigquery(spark, quality_df, "risklens_catalog.quality_scores", args.project, args.bucket)
 
     if all_sla:
         sla_df = pd.concat(all_sla, ignore_index=True)
-        log.info(f"Writing SLA status ({len(sla_df):,} rows)...")
+        log.info(f"[bronze→ingest] Writing SLA status | table=risklens_catalog.sla_status | rows={len(sla_df):,} | days={processed_days}")
         write_to_bigquery(spark, sla_df, "risklens_catalog.sla_status", args.project, args.bucket)
 
     # ── Static data (overwrite on each run) ───────────────────────────────────
-    log.info("Writing ownership registry...")
+    log.info(f"[bronze→ingest] Writing static ownership registry | table=risklens_catalog.ownership | mode=overwrite")
     write_to_bigquery(spark, gen_ownership(), "risklens_catalog.ownership",
                       args.project, args.bucket, mode="overwrite")
 
-    log.info("Writing asset catalog...")
+    log.info(f"[bronze→ingest] Writing asset catalog | table=risklens_catalog.assets | mode=overwrite")
     write_to_bigquery(spark, gen_assets_catalog(), "risklens_catalog.assets",
                       args.project, args.bucket, mode="overwrite")
 
-    log.info("Writing lineage graph...")
+    log.info(f"[bronze→ingest] Writing lineage graph | tables=risklens_lineage.nodes,risklens_lineage.edges | mode=overwrite")
     nodes, edges = gen_lineage()
-    log.debug(f"  Lineage: {len(nodes)} nodes, {len(edges)} edges")
+    log.info(f"[bronze→ingest] Lineage graph generated | nodes={len(nodes)} | edges={len(edges)}")
     write_to_bigquery(spark, nodes, "risklens_lineage.nodes",
                       args.project, args.bucket, mode="overwrite")
     write_to_bigquery(spark, edges, "risklens_lineage.edges",
                       args.project, args.bucket, mode="overwrite")
 
-    log.info("Writing schema registry...")
+    log.info(f"[bronze→ingest] Writing schema registry | table=risklens_catalog.schema_registry | mode=overwrite")
     write_to_bigquery(spark, gen_schema_registry(), "risklens_catalog.schema_registry",
                       args.project, args.bucket, mode="overwrite")
 
-    log.info("Writing desk registry...")
+    log.info(f"[bronze→ingest] Writing desk registry | table=risklens_catalog.desk_registry | mode=overwrite")
     write_to_bigquery(spark, gen_desk_registry(), "risklens_catalog.desk_registry",
                       args.project, args.bucket, mode="overwrite")
 
-    log.info(f"← main (bronze_synthetic) done: processed_days={processed_days} skipped_weekend={skipped_weekend}")
+    log.info(f"[bronze→ingest] ✓ Pipeline complete | program=bronze_synthetic.py | processed_days={processed_days} | skipped_weekend={skipped_weekend} | tables_written={list(BRONZE_TABLES.values())} | next=silver_transform.py")
     spark.stop()
 
 

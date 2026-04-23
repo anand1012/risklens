@@ -26,7 +26,8 @@ def get_risk_summary(
 ):
     """Daily risk summary: ES + VaR back-testing + PLAT + capital per desk."""
     logger.info(
-        "→ get_risk_summary called",
+        "[api] GET /risk/summary | table=risklens_gold.risk_summary | trade_date=%s | desk=%s",
+        trade_date or "latest", desk or "all",
         extra={"json_fields": {"trade_date": trade_date, "desk": desk}},
     )
     date_filter = (
@@ -39,7 +40,6 @@ def get_risk_summary(
         date_filter = f"trade_date = (SELECT MAX(trade_date) FROM `{p}.risklens_gold.risk_summary`)"
 
     desk_filter = f"AND desk = '{desk}'" if desk else ""
-    logger.debug("get_risk_summary: date_filter=%s desk_filter=%s", date_filter[:60], desk_filter)
 
     sql = f"""
         SELECT
@@ -68,17 +68,23 @@ def get_risk_summary(
     """
     rows = query_rows(sql)
     red_zones = sum(1 for r in rows if r.get("traffic_light_zone") == "RED")
+    amber_zones = sum(1 for r in rows if r.get("traffic_light_zone") == "AMBER")
+    green_zones = sum(1 for r in rows if r.get("traffic_light_zone") == "GREEN")
     plat_fails = sum(1 for r in rows if r.get("plat_pass") is False)
     logger.info(
-        "← get_risk_summary done",
+        "[api] ✓ GET /risk/summary | table=risklens_gold.risk_summary | rows=%d | RED=%d | AMBER=%d | GREEN=%d | plat_fails=%d | trade_date=%s",
+        len(rows), red_zones, amber_zones, green_zones, plat_fails, trade_date or "latest",
         extra={"json_fields": {
             "row_count": len(rows),
             "red_zone_desks": red_zones,
+            "amber_zone_desks": amber_zones,
+            "green_zone_desks": green_zones,
             "plat_fail_desks": plat_fails,
         }},
     )
     if not rows:
-        logger.warning("get_risk_summary returned 0 rows", extra={"json_fields": {"trade_date": trade_date, "desk": desk}})
+        logger.warning("[api] GET /risk/summary returned 0 rows | table=risklens_gold.risk_summary | trade_date=%s | desk=%s", trade_date, desk,
+                       extra={"json_fields": {"trade_date": trade_date, "desk": desk}})
     return rows
 
 
@@ -89,7 +95,8 @@ def get_capital_charge(
 ):
     """Capital charge per desk: ES × (3.0 + traffic_light_multiplier)."""
     logger.info(
-        "→ get_capital_charge called",
+        "[api] GET /risk/capital | table=risklens_gold.capital_charge | trade_date=%s | risk_class=%s",
+        trade_date or "latest", risk_class or "all",
         extra={"json_fields": {"trade_date": trade_date, "risk_class": risk_class}},
     )
     p = project()
@@ -121,7 +128,8 @@ def get_capital_charge(
     rows = query_rows(sql)
     total_capital = sum(r.get("capital_charge_usd") or 0 for r in rows if r.get("desk") != "FIRM")
     logger.info(
-        "← get_capital_charge done",
+        "[api] ✓ GET /risk/capital | table=risklens_gold.capital_charge | rows=%d | total_capital_usd=$%.0f | trade_date=%s",
+        len(rows), total_capital, trade_date or "latest",
         extra={"json_fields": {"row_count": len(rows), "total_capital_usd": round(total_capital, 2)}},
     )
     return rows
@@ -132,11 +140,11 @@ def get_available_dates(
     table: str = Query("backtesting", description="gold table name"),
 ):
     """Distinct calc_dates for a gold table, newest first (for date pickers)."""
-    logger.info("→ get_available_dates called", extra={"json_fields": {"table": table}})
+    logger.info("[api] GET /risk/dates | table=risklens_gold.%s", table, extra={"json_fields": {"table": table}})
     p = project()
     allowed = {"backtesting", "es_outputs", "capital_charge", "plat_results", "risk_summary"}
     if table not in allowed:
-        logger.warning("get_available_dates: invalid table requested: %s", table)
+        logger.warning("[api] GET /risk/dates: invalid table | requested=%s | allowed=%s", table, sorted(allowed))
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=f"table must be one of {sorted(allowed)}")
     sql = f"""
@@ -146,7 +154,8 @@ def get_available_dates(
     """
     dates = [r["date"] for r in query_rows(sql)]
     logger.info(
-        "← get_available_dates done",
+        "[api] ✓ GET /risk/dates | table=risklens_gold.%s | dates=%d | latest=%s",
+        table, len(dates), dates[0] if dates else None,
         extra={"json_fields": {"table": table, "date_count": len(dates), "latest": dates[0] if dates else None}},
     )
     return dates
@@ -155,7 +164,7 @@ def get_available_dates(
 @router.get("/trend")
 def get_risk_trend(limit: int = Query(90, le=365)):
     """Daily total capital charge + ES trend across all desks (for chart)."""
-    logger.info("→ get_risk_trend called", extra={"json_fields": {"limit": limit}})
+    logger.info("[api] GET /risk/trend | table=risklens_gold.risk_summary | limit=%d", limit, extra={"json_fields": {"limit": limit}})
     p = project()
     sql = f"""
         SELECT
@@ -171,7 +180,8 @@ def get_risk_trend(limit: int = Query(90, le=365)):
     """
     rows = query_rows(sql)
     logger.info(
-        "← get_risk_trend done",
+        "[api] ✓ GET /risk/trend | table=risklens_gold.risk_summary | days=%d | limit=%d",
+        len(rows), limit,
         extra={"json_fields": {"day_count": len(rows), "limit": limit}},
     )
     return rows
@@ -185,7 +195,8 @@ def get_backtesting(
 ):
     """VaR 99% back-testing exceptions and traffic light zone per desk."""
     logger.info(
-        "→ get_backtesting called",
+        "[api] GET /risk/backtesting | table=risklens_gold.backtesting | calc_date=%s | trade_date=%s | zone=%s",
+        calc_date or "latest", trade_date, zone or "all",
         extra={"json_fields": {"calc_date": calc_date, "trade_date": trade_date, "zone": zone}},
     )
     p = project()
@@ -196,7 +207,6 @@ def get_backtesting(
     else:
         date_filter = f"calc_date = (SELECT MAX(calc_date) FROM `{p}.risklens_gold.backtesting`)"
     zone_filter = f"AND traffic_light_zone = '{zone.upper()}'" if zone else ""
-    logger.debug("get_backtesting: date_filter=%s zone_filter=%s", date_filter[:60], zone_filter)
 
     sql = f"""
         SELECT
@@ -222,8 +232,10 @@ def get_backtesting(
     for r in rows:
         z = r.get("traffic_light_zone", "UNKNOWN")
         zone_counts[z] = zone_counts.get(z, 0) + 1
+    zone_str = " | ".join(f"{z}={c}" for z, c in sorted(zone_counts.items()))
     logger.info(
-        "← get_backtesting done",
+        "[api] ✓ GET /risk/backtesting | table=risklens_gold.backtesting | rows=%d | zones=%s | calc_date=%s",
+        len(rows), zone_str, calc_date or "latest",
         extra={"json_fields": {"row_count": len(rows), "zone_distribution": zone_counts}},
     )
     return rows
@@ -236,7 +248,8 @@ def get_plat_results(
 ):
     """P&L Attribution Test results per desk (BCBS 457 ¶329-345)."""
     logger.info(
-        "→ get_plat_results called",
+        "[api] GET /risk/plat | table=risklens_gold.plat_results | trade_date=%s | pass_only=%s",
+        trade_date or "latest", pass_only,
         extra={"json_fields": {"trade_date": trade_date, "pass_only": pass_only}},
     )
     p = project()
@@ -273,11 +286,12 @@ def get_plat_results(
     rows = query_rows(sql)
     fails = sum(1 for r in rows if r.get("plat_pass") is False)
     logger.info(
-        "← get_plat_results done",
+        "[api] ✓ GET /risk/plat | table=risklens_gold.plat_results | rows=%d | plat_fail=%d | plat_pass=%d | trade_date=%s",
+        len(rows), fails, len(rows) - fails, trade_date or "latest",
         extra={"json_fields": {"row_count": len(rows), "fail_count": fails}},
     )
     if fails:
-        logger.warning("get_plat_results: %d desks failing PLAT", fails)
+        logger.warning("[api] PLAT failures detected | table=risklens_gold.plat_results | failing_desks=%d | trade_date=%s", fails, trade_date)
     return rows
 
 
@@ -289,7 +303,8 @@ def get_rfet_results(
 ):
     """Risk Factor Eligibility Test results (BCBS 457 ¶76-80)."""
     logger.info(
-        "→ get_rfet_results called",
+        "[api] GET /risk/rfet | table=risklens_gold.rfet_results | rfet_date=%s | risk_class=%s | failures_only=%s",
+        rfet_date or "latest", risk_class or "all", failures_only,
         extra={"json_fields": {"rfet_date": rfet_date, "risk_class": risk_class, "failures_only": failures_only}},
     )
     p = project()
@@ -322,11 +337,12 @@ def get_rfet_results(
     rows = query_rows(sql)
     failures = sum(1 for r in rows if r.get("rfet_pass") is False)
     logger.info(
-        "← get_rfet_results done",
+        "[api] ✓ GET /risk/rfet | table=risklens_gold.rfet_results | rows=%d | rfet_fail=%d | rfet_pass=%d | rfet_date=%s",
+        len(rows), failures, len(rows) - failures, rfet_date or "latest",
         extra={"json_fields": {"row_count": len(rows), "failure_count": failures}},
     )
     if failures:
-        logger.warning("get_rfet_results: %d risk factors failing RFET", failures)
+        logger.warning("[api] RFET failures detected | table=risklens_gold.rfet_results | failing_factors=%d | rfet_date=%s", failures, rfet_date)
     return rows
 
 
@@ -337,7 +353,8 @@ def get_es_outputs(
 ):
     """Expected Shortfall 97.5% per desk × risk class (BCBS 457 ¶21-34)."""
     logger.info(
-        "→ get_es_outputs called",
+        "[api] GET /risk/es | table=risklens_gold.es_outputs | trade_date=%s | risk_class=%s",
+        trade_date or "latest", risk_class or "all",
         extra={"json_fields": {"trade_date": trade_date, "risk_class": risk_class}},
     )
     p = project()
@@ -365,7 +382,8 @@ def get_es_outputs(
     rows = query_rows(sql)
     total_es = sum(r.get("es_975_scaled") or 0 for r in rows if r.get("desk") != "FIRM")
     logger.info(
-        "← get_es_outputs done",
+        "[api] ✓ GET /risk/es | table=risklens_gold.es_outputs | rows=%d | total_es_scaled=$%.0f | trade_date=%s",
+        len(rows), total_es, trade_date or "latest",
         extra={"json_fields": {"row_count": len(rows), "total_es_scaled": round(total_es, 2)}},
     )
     return rows

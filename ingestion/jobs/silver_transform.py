@@ -48,7 +48,7 @@ log = logging.getLogger("silver_transform")
 def read_bronze(spark: SparkSession, project: str, table: str,
                 trade_date: str | None = None) -> DataFrame:
     """Read from BigQuery bronze layer, optionally filtered by trade_date."""
-    log.info(f"→ read_bronze called: table={table} trade_date={trade_date}")
+    log.info(f"[bronze→silver] Reading bronze table | table=risklens_bronze.{table} | date_filter={trade_date} | program=silver_transform.py")
     df = (
         spark.read
         .format("bigquery")
@@ -59,7 +59,7 @@ def read_bronze(spark: SparkSession, project: str, table: str,
     )
     if trade_date:
         df = df.filter(F.col("trade_date") == trade_date)
-    log.info(f"← read_bronze done: table={table}")
+    log.info(f"[bronze→silver] Bronze read complete | table=risklens_bronze.{table} | date={trade_date}")
     return df
 
 
@@ -69,7 +69,7 @@ def write_silver(df: DataFrame, project: str, bucket: str,
                  partition_type: str = "DAY",
                  cluster_fields: str | None = None) -> int:
     """Write cleaned DataFrame to BigQuery silver layer."""
-    log.info(f"→ write_silver called: table={table} mode={mode}")
+    log.info(f"[bronze→silver] Writing to silver | table=risklens_silver.{table} | mode={mode} | partition={partition_field} | cluster={cluster_fields}")
     row_count = df.count()
     writer = (
         df.write
@@ -86,16 +86,16 @@ def write_silver(df: DataFrame, project: str, bucket: str,
     if cluster_fields:
         writer = writer.option("clusteredFields", cluster_fields)
     writer.mode(mode).save()
-    log.info(f"← write_silver done: risklens_silver.{table}: {row_count:,} rows written")
+    log.info(f"[bronze→silver] ✓ Written {row_count:,} rows → risklens_silver.{table} | partition={partition_field} | program=silver_transform.py")
     return row_count
 
 
 def write_quarantine(df: DataFrame, project: str, bucket: str,
                      source: str, reason: str, trade_date: str):
     """Write rejected records to quarantine table for audit."""
-    log.info(f"→ write_quarantine called: source={source} reason={reason}")
+    log.info(f"[bronze→silver] Quarantine check | source={source} | reason={reason} | date={trade_date}")
     if df.rdd.isEmpty():
-        log.debug(f"  write_quarantine: empty DataFrame for {source} — skipping")
+        log.debug(f"[bronze→silver] No quarantine records | source={source} | reason={reason}")
         return
     row_count = df.count()
     # Select only metadata cols — all sources have different schemas so we
@@ -118,14 +118,14 @@ def write_quarantine(df: DataFrame, project: str, bucket: str,
         .mode("append")
         .save()
     )
-    log.warning(f"← write_quarantine done: quarantined {row_count:,} records from {source}: {reason}")
+    log.warning(f"[bronze→silver] Quarantined {row_count:,} bad rows → risklens_bronze.quarantine_r | source={source} | reason={reason} | date={trade_date}")
 
 
 def update_quality_score(spark: SparkSession, project: str, bucket: str,
                          asset_id: str, total: int, nulls: int,
                          dupes: int, schema_drift: bool, trade_date: str):
     """Update quality scores in catalog after silver processing."""
-    log.info(f"→ update_quality_score called: asset_id={asset_id} total={total} nulls={nulls} dupes={dupes}")
+    log.info(f"[bronze→silver] Recording quality scores | asset_id={asset_id} | total_rows={total:,} | nulls={nulls} | dupes={dupes} | date={trade_date} | table=risklens_catalog.quality_scores")
     null_rate  = round(nulls / total, 4) if total > 0 else 0.0
     dupe_rate  = round(dupes / total, 4) if total > 0 else 0.0
     freshness  = "fresh" if null_rate < 0.02 else ("stale" if null_rate < 0.05 else "critical")
@@ -150,21 +150,21 @@ def update_quality_score(spark: SparkSession, project: str, bucket: str,
         .mode("append")
         .save()
     )
-    log.info(f"← update_quality_score done: asset_id={asset_id} null_rate={null_rate} freshness={freshness}")
+    log.info(f"[bronze→silver] ✓ Quality score recorded | asset_id={asset_id} | null_rate={null_rate} | dupe_rate={dupe_rate} | freshness={freshness} | date={trade_date}")
 
 
 # ── Transforms ────────────────────────────────────────────────────────────────
 
 def transform_trades(spark: SparkSession, project: str, bucket: str, trade_date: str):
     """Bronze → Silver for DTCC trade data."""
-    log.info(f"→ transform_trades called: trade_date={trade_date}")
+    log.info(f"[bronze→silver] Starting trade transform | source=risklens_bronze.trades_r | target=risklens_silver.trades | date={trade_date} | program=silver_transform.py")
 
     df = read_bronze(spark, project, "trades_r", trade_date)
     total = df.count()
-    log.info(f"  transform_trades: bronze total={total:,} rows")
+    log.info(f"[bronze→silver] trades_r read complete | total_rows={total:,} | date={trade_date} | source=risklens_bronze.trades_r")
 
     if total == 0:
-        log.warning(f"  transform_trades: No bronze trade data for {trade_date} — skipping")
+        log.warning(f"[bronze→silver] No bronze trade data for date={trade_date} | table=risklens_bronze.trades_r — skipping risklens_silver.trades")
         return
 
     # ── Null check on critical fields ────────────────────────────────────────
@@ -173,6 +173,8 @@ def transform_trades(spark: SparkSession, project: str, bucket: str, trade_date:
     null_filter   = " OR ".join([f"{c} IS NULL" for c in critical_cols])
     bad_df  = df.filter(null_filter)
     good_df = df.filter(f"NOT ({null_filter})")
+    nulls_before_quarantine = bad_df.count()
+    log.info(f"[bronze→silver] Null-check trades | critical_cols={critical_cols} | bad_rows={nulls_before_quarantine} | good_rows={total - nulls_before_quarantine} | date={trade_date}")
 
     write_quarantine(bad_df, project, bucket, "bronze.trades_r",
                      "NULL in critical field", trade_date)
@@ -183,8 +185,8 @@ def transform_trades(spark: SparkSession, project: str, bucket: str, trade_date:
     good_df  = good_df.withColumn("_rank", F.row_number().over(window)) \
                       .filter(F.col("_rank") == 1) \
                       .drop("_rank")
-    dupes    = total - good_df.count()
-    log.debug(f"  transform_trades: dupes removed={dupes}")
+    dupes    = total - nulls_before_quarantine - good_df.count()
+    log.info(f"[bronze→silver] Dedup trades | key=dissemination_id+trade_date | dupes_removed={dupes} | clean_rows={good_df.count()} | date={trade_date}")
 
     # ── Normalize schema ──────────────────────────────────────────────────────
     silver_df = good_df.select(
@@ -205,30 +207,31 @@ def transform_trades(spark: SparkSession, project: str, bucket: str, trade_date:
         F.current_timestamp().alias("processed_at"),
     )
 
-    nulls_count = bad_df.count()
+    nulls_count = nulls_before_quarantine
     write_silver(silver_df, project, bucket, "trades",
                  partition_field="trade_date", cluster_fields="asset_class,currency")
     update_quality_score(spark, project, bucket, "silver_trades",
                          total, nulls_count, dupes, False, trade_date)
-    log.info(f"← transform_trades done: trade_date={trade_date} total={total:,} nulls={nulls_count} dupes={dupes}")
+    log.info(f"[bronze→silver] ✓ Trade transform complete | date={trade_date} | total_bronze={total:,} | quarantined={nulls_count} | deduped={dupes} | written_silver=risklens_silver.trades | next=silver_enrich.py")
 
 
 def transform_rates(spark: SparkSession, project: str, bucket: str, trade_date: str):
     """Bronze → Silver for FRED rate series."""
-    log.info(f"→ transform_rates called: trade_date={trade_date}")
+    log.info(f"[bronze→silver] Starting rates transform | source=risklens_bronze.rates_r | target=risklens_silver.rates | date={trade_date} | program=silver_transform.py")
 
     df = read_bronze(spark, project, "rates_r", trade_date)
     total = df.count()
-    log.info(f"  transform_rates: bronze total={total:,} rows")
+    log.info(f"[bronze→silver] rates_r read complete | total_rows={total:,} | date={trade_date} | source=risklens_bronze.rates_r")
 
     if total == 0:
-        log.warning(f"  transform_rates: No bronze rate data for {trade_date} — skipping")
+        log.warning(f"[bronze→silver] No bronze rate data for date={trade_date} | table=risklens_bronze.rates_r — skipping risklens_silver.rates")
         return
 
     # ── Drop rows where value is NULL (FRED uses '.' for missing) ────────────
     bad_df  = df.filter(F.col("value").isNull())
     good_df = df.filter(F.col("value").isNotNull())
     nulls_count = bad_df.count()
+    log.info(f"[bronze→silver] Null-check rates | null_value_rows={nulls_count} | valid_rows={total-nulls_count} | date={trade_date} | FRED_missing_sentinel=dot")
 
     write_quarantine(bad_df, project, bucket, "bronze.rates_r",
                      "NULL value — missing observation", trade_date)
@@ -239,6 +242,7 @@ def transform_rates(spark: SparkSession, project: str, bucket: str, trade_date: 
                      .filter(F.col("_rank") == 1) \
                      .drop("_rank")
     dupes   = total - nulls_count - good_df.count()
+    log.info(f"[bronze→silver] Dedup rates | key=series_id+date | dupes_removed={dupes} | clean_rows={good_df.count()} | date={trade_date}")
 
     # ── Outlier flag (value > 3 std from series mean) ────────────────────────
     stats   = good_df.groupBy("series_id").agg(
@@ -266,19 +270,19 @@ def transform_rates(spark: SparkSession, project: str, bucket: str, trade_date: 
                  partition_field="date", cluster_fields="series_id,domain")
     update_quality_score(spark, project, bucket, "silver_rates",
                          total, nulls_count, dupes, False, trade_date)
-    log.info(f"← transform_rates done: trade_date={trade_date} total={total:,} nulls={nulls_count} dupes={dupes}")
+    log.info(f"[bronze→silver] ✓ Rates transform complete | date={trade_date} | total_bronze={total:,} | quarantined={nulls_count} | deduped={dupes} | outliers_flagged=true | written_silver=risklens_silver.rates | next=silver_enrich.py")
 
 
 def transform_prices(spark: SparkSession, project: str, bucket: str, trade_date: str):
     """Bronze → Silver for Yahoo Finance price data."""
-    log.info(f"→ transform_prices called: trade_date={trade_date}")
+    log.info(f"[bronze→silver] Starting prices transform | source=risklens_bronze.prices_r | target=risklens_silver.prices | date={trade_date} | program=silver_transform.py")
 
     df = read_bronze(spark, project, "prices_r", trade_date)
     total = df.count()
-    log.info(f"  transform_prices: bronze total={total:,} rows")
+    log.info(f"[bronze→silver] prices_r read complete | total_rows={total:,} | date={trade_date} | source=risklens_bronze.prices_r")
 
     if total == 0:
-        log.warning(f"  transform_prices: No bronze price data for {trade_date} — skipping")
+        log.warning(f"[bronze→silver] No bronze price data for date={trade_date} | table=risklens_bronze.prices_r — skipping risklens_silver.prices")
         return
 
     # ── Null check on OHLCV ───────────────────────────────────────────────────
@@ -286,6 +290,7 @@ def transform_prices(spark: SparkSession, project: str, bucket: str, trade_date:
     bad_df       = df.filter(null_filter)
     good_df      = df.filter(f"NOT ({null_filter})")
     nulls_count  = bad_df.count()
+    log.info(f"[bronze→silver] OHLCV null-check | null_ohlcv_rows={nulls_count} | valid_rows={total-nulls_count} | date={trade_date}")
 
     write_quarantine(bad_df, project, bucket, "bronze.prices_r",
                      "NULL in OHLCV", trade_date)
@@ -301,6 +306,8 @@ def transform_prices(spark: SparkSession, project: str, bucket: str, trade_date:
         (F.col("close") >= F.col("low")) &
         (F.col("close") <= F.col("high"))
     )
+    ohlcv_sanity_fails = invalid_df.count()
+    log.info(f"[bronze→silver] OHLCV sanity check (high>=low, close in [low,high]) | failed_rows={ohlcv_sanity_fails} | passed_rows={good_df.count()} | date={trade_date}")
 
     write_quarantine(invalid_df, project, bucket, "bronze.prices_r",
                      "OHLCV sanity check failed", trade_date)
@@ -310,7 +317,8 @@ def transform_prices(spark: SparkSession, project: str, bucket: str, trade_date:
     good_df = good_df.withColumn("_rank", F.row_number().over(window)) \
                      .filter(F.col("_rank") == 1) \
                      .drop("_rank")
-    dupes   = total - nulls_count - good_df.count()
+    dupes   = total - nulls_count - ohlcv_sanity_fails - good_df.count()
+    log.info(f"[bronze→silver] Dedup prices | key=ticker+date | dupes_removed={dupes} | clean_rows={good_df.count()} | date={trade_date}")
 
     silver_df = good_df.select(
         F.col("ticker"),
@@ -332,19 +340,19 @@ def transform_prices(spark: SparkSession, project: str, bucket: str, trade_date:
                  partition_field="date", cluster_fields="ticker,asset_class,currency")
     update_quality_score(spark, project, bucket, "silver_prices",
                          total, nulls_count, dupes, False, trade_date)
-    log.info(f"← transform_prices done: trade_date={trade_date} total={total:,} nulls={nulls_count} dupes={dupes}")
+    log.info(f"[bronze→silver] ✓ Prices transform complete | date={trade_date} | total_bronze={total:,} | null_quarantined={nulls_count} | ohlcv_fails={ohlcv_sanity_fails} | deduped={dupes} | written_silver=risklens_silver.prices | next=silver_enrich.py")
 
 
 def transform_risk(spark: SparkSession, project: str, bucket: str, trade_date: str):
     """Bronze → Silver for synthetic risk outputs (VaR, ES, P&L vectors)."""
-    log.info(f"→ transform_risk called: trade_date={trade_date}")
+    log.info(f"[bronze→silver] Starting risk transform | source=risklens_bronze.risk_outputs_s | target=risklens_silver.risk_outputs | date={trade_date} | program=silver_transform.py")
 
     df = read_bronze(spark, project, "risk_outputs_s", trade_date)
     total = df.count()
-    log.info(f"  transform_risk: bronze total={total:,} rows")
+    log.info(f"[bronze→silver] risk_outputs_s read complete | total_rows={total:,} | date={trade_date} | source=risklens_bronze.risk_outputs_s")
 
     if total == 0:
-        log.warning(f"  transform_risk: No bronze risk data for {trade_date} — skipping")
+        log.warning(f"[bronze→silver] No bronze risk data for date={trade_date} | table=risklens_bronze.risk_outputs_s — skipping risklens_silver.risk_outputs")
         return
 
     # ── Null check on required fields ─────────────────────────────────────────
@@ -352,6 +360,7 @@ def transform_risk(spark: SparkSession, project: str, bucket: str, trade_date: s
     bad_df  = df.filter(null_filter)
     good_df = df.filter(f"NOT ({null_filter})")
     nulls_count = bad_df.count()
+    log.info(f"[bronze→silver] Risk null-check | null_desk_or_calcdate={nulls_count} | valid_rows={total-nulls_count} | date={trade_date}")
 
     write_quarantine(bad_df, project, bucket, "bronze.risk_outputs_s",
                      "NULL in desk or calc_date", trade_date)
@@ -359,7 +368,9 @@ def transform_risk(spark: SparkSession, project: str, bucket: str, trade_date: s
     # ── VaR/ES bounds: must be positive ───────────────────────────────────────
     if "var_99_1d" in good_df.columns:
         invalid_df = good_df.filter(F.col("var_99_1d") <= 0)
+        invalid_count = invalid_df.count()
         good_df    = good_df.filter(F.col("var_99_1d") > 0)
+        log.info(f"[bronze→silver] VaR bounds check (var_99_1d > 0) | invalid_rows={invalid_count} | date={trade_date}")
         write_quarantine(invalid_df, project, bucket, "bronze.risk_outputs_s",
                          "VaR must be positive", trade_date)
 
@@ -370,6 +381,7 @@ def transform_risk(spark: SparkSession, project: str, bucket: str, trade_date: s
                         .filter(F.col("_rank") == 1) \
                         .drop("_rank")
     dupes      = total - nulls_count - good_df.count()
+    log.info(f"[bronze→silver] Dedup risk outputs | key=desk+calc_date | dupes_removed={dupes} | clean_rows={good_df.count()} | date={trade_date}")
 
     silver_df  = good_df.withColumn("processed_at", F.current_timestamp())
 
@@ -377,20 +389,20 @@ def transform_risk(spark: SparkSession, project: str, bucket: str, trade_date: s
                  partition_field="calc_date", cluster_fields="desk")
     update_quality_score(spark, project, bucket, "silver_risk_outputs",
                          total, nulls_count, dupes, False, trade_date)
-    log.info(f"← transform_risk done: trade_date={trade_date} total={total:,} nulls={nulls_count} dupes={dupes}")
+    log.info(f"[bronze→silver] ✓ Risk transform complete | date={trade_date} | total_bronze={total:,} | quarantined={nulls_count} | deduped={dupes} | written_silver=risklens_silver.risk_outputs | next=silver_enrich.py")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    log.info("→ main (silver_transform) called")
+    log.info(f"[bronze→silver] Pipeline starting | program=silver_transform.py | sources=risklens_bronze.[trades_r,rates_r,prices_r,risk_outputs_s] | targets=risklens_silver.[trades,rates,prices,risk_outputs]")
     parser = argparse.ArgumentParser()
     parser.add_argument("--project",    required=True)
     parser.add_argument("--bucket",     required=True)
     parser.add_argument("--date",       default=datetime.utcnow().strftime("%Y-%m-%d"),
                         help="Trade date to process (YYYY-MM-DD)")
     args = parser.parse_args()
-    log.info(f"  args: project={args.project} bucket={args.bucket} date={args.date}")
+    log.info(f"[bronze→silver] Args | project={args.project} | bucket={args.bucket} | date={args.date}")
 
     spark = (
         SparkSession.builder
@@ -401,14 +413,14 @@ def main():
     )
     spark.sparkContext.setLogLevel("WARN")
 
-    log.info(f"Silver transform for trade_date={args.date}")
+    log.info(f"[bronze→silver] Starting all 4 transforms | date={args.date} | order=trades→rates→prices→risk")
 
     transform_trades(spark, args.project, args.bucket, args.date)
     transform_rates(spark,  args.project, args.bucket, args.date)
     transform_prices(spark, args.project, args.bucket, args.date)
     transform_risk(spark,   args.project, args.bucket, args.date)
 
-    log.info(f"← main (silver_transform) done: trade_date={args.date}")
+    log.info(f"[bronze→silver] ✓ All transforms complete | date={args.date} | program=silver_transform.py | next=silver_enrich.py")
     spark.stop()
 
 

@@ -21,14 +21,15 @@ _PROJECT = os.environ.get("GCP_PROJECT", "risklens-frtb-2026")
 
 @lru_cache(maxsize=1)
 def get_client() -> bigquery.Client:
-    logger.info("→ get_client called", extra={"json_fields": {"project": _PROJECT}})
+    logger.info("[api] Initializing BigQuery client | project=%s", _PROJECT,
+                extra={"json_fields": {"project": _PROJECT}})
     client = bigquery.Client(project=_PROJECT)
-    logger.info("← get_client done", extra={"json_fields": {"project": client.project}})
+    logger.info("[api] ✓ BigQuery client ready | project=%s", client.project,
+                extra={"json_fields": {"project": client.project}})
     return client
 
 
 def project() -> str:
-    logger.debug("→ project called, returning %s", _PROJECT)
     return _PROJECT
 
 
@@ -38,18 +39,18 @@ def project() -> str:
 
 def query_rows(sql: str, params: list | None = None) -> list[dict]:
     """Run a query and return results as a list of plain dicts."""
+    sql_preview = sql.strip()[:200]
     logger.info(
-        "→ query_rows called",
-        extra={"json_fields": {"sql_preview": sql.strip()[:500], "has_params": bool(params)}},
+        "[api] BigQuery query starting | sql=%s | params=%d | program=bigquery.py",
+        sql_preview, len(params) if params else 0,
+        extra={"json_fields": {"sql_preview": sql_preview, "param_count": len(params) if params else 0}},
     )
     client = get_client()
     t0 = time.monotonic()
     try:
         if params:
-            logger.debug("Running parameterized query with %d params", len(params))
             job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params))
         else:
-            logger.debug("Running unparameterized query")
             job = client.query(sql)
         rows = []
         for row in job.result():
@@ -57,23 +58,24 @@ def query_rows(sql: str, params: list | None = None) -> list[dict]:
             # Replace NaN/Inf with None so JSON serialization doesn't fail
             for k, v in d.items():
                 if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
-                    logger.debug("NaN/Inf replaced with None for field %s", k)
                     d[k] = None
             rows.append(d)
         latency_ms = int((time.monotonic() - t0) * 1000)
         logger.info(
-            "← query_rows done",
-            extra={"json_fields": {"row_count": len(rows), "latency_ms": latency_ms}},
+            "[api] ✓ BigQuery query complete | rows=%d | latency_ms=%d | sql=%s",
+            len(rows), latency_ms, sql_preview,
+            extra={"json_fields": {"row_count": len(rows), "latency_ms": latency_ms, "sql_preview": sql_preview}},
         )
         if not rows:
-            logger.warning("query_rows returned 0 rows", extra={"json_fields": {"sql_preview": sql.strip()[:200]}})
+            logger.warning("[api] BigQuery returned 0 rows | sql=%s", sql_preview,
+                           extra={"json_fields": {"sql_preview": sql_preview}})
         return rows
     except Exception as exc:
         latency_ms = int((time.monotonic() - t0) * 1000)
         logger.error(
-            "query_rows failed after %dms: %s",
-            latency_ms, exc,
+            "[api] FAILED: BigQuery query error | latency_ms=%d | sql=%s | error=%s",
+            latency_ms, sql_preview, exc,
             exc_info=True,
-            extra={"json_fields": {"sql_preview": sql.strip()[:500], "latency_ms": latency_ms}},
+            extra={"json_fields": {"sql_preview": sql_preview, "latency_ms": latency_ms}},
         )
         raise

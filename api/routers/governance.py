@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 @router.get("/sla")
 def get_sla_status(breaches_only: bool = Query(False)):
     logger.info(
-        "→ get_sla_status called",
+        "[api] GET /governance/sla | tables=risklens_catalog.sla_status+assets | breaches_only=%s",
+        breaches_only,
         extra={"json_fields": {"breaches_only": breaches_only}},
     )
     where = "s.breach_flag = TRUE" if breaches_only else "1=1"
@@ -42,7 +43,8 @@ def get_sla_status(breaches_only: bool = Query(False)):
     rows = query_rows(sql)
     breaches = sum(1 for r in rows if r.get("breach_flag"))
     logger.info(
-        "← get_sla_status done",
+        "[api] ✓ GET /governance/sla | tables=risklens_catalog.sla_status+assets | rows=%d | breaches=%d | on_time=%d",
+        len(rows), breaches, len(rows) - breaches,
         extra={"json_fields": {
             "result_count": len(rows),
             "breach_count": breaches,
@@ -50,13 +52,13 @@ def get_sla_status(breaches_only: bool = Query(False)):
         }},
     )
     if not rows:
-        logger.warning("get_sla_status returned 0 rows", extra={"json_fields": {"breaches_only": breaches_only}})
+        logger.warning("[api] GET /governance/sla returned 0 rows | breaches_only=%s", breaches_only)
     return rows
 
 
 @router.get("/ownership")
 def get_ownership(team: str | None = Query(None)):
-    logger.info("→ get_ownership called", extra={"json_fields": {"team": team}})
+    logger.info("[api] GET /governance/ownership | tables=risklens_catalog.ownership+assets | team=%s", team or "all", extra={"json_fields": {"team": team}})
     where = f"o.team = '{team}'" if team else "1=1"
     sql = f"""
         SELECT
@@ -77,11 +79,12 @@ def get_ownership(team: str | None = Query(None)):
     rows = query_rows(sql)
     unassigned = sum(1 for r in rows if not r.get("owner_name"))
     logger.info(
-        "← get_ownership done",
+        "[api] ✓ GET /governance/ownership | tables=risklens_catalog.ownership+assets | rows=%d | unassigned=%d | team=%s",
+        len(rows), unassigned, team or "all",
         extra={"json_fields": {"result_count": len(rows), "unassigned_count": unassigned, "team": team}},
     )
     if unassigned:
-        logger.warning("get_ownership: %d assets have no owner", unassigned)
+        logger.warning("[api] GET /governance/ownership: %d assets have no owner | table=risklens_catalog.ownership", unassigned)
     return rows
 
 
@@ -91,7 +94,8 @@ def get_quality_scores(
     schema_drift: bool | None = Query(None),
 ):
     logger.info(
-        "→ get_quality_scores called",
+        "[api] GET /governance/quality | tables=risklens_catalog.quality_scores+assets | freshness=%s | schema_drift=%s",
+        freshness_status or "all", schema_drift,
         extra={"json_fields": {"freshness_status": freshness_status, "schema_drift": schema_drift}},
     )
     filters = ["1=1"]
@@ -100,7 +104,6 @@ def get_quality_scores(
     if schema_drift is not None:
         filters.append(f"q.schema_drift = {str(schema_drift).upper()}")
     where = " AND ".join(filters)
-    logger.debug("get_quality_scores WHERE: %s", where)
 
     sql = f"""
         SELECT
@@ -122,7 +125,8 @@ def get_quality_scores(
     critical = sum(1 for r in rows if r.get("freshness_status") == "critical")
     drift_count = sum(1 for r in rows if r.get("schema_drift"))
     logger.info(
-        "← get_quality_scores done",
+        "[api] ✓ GET /governance/quality | tables=risklens_catalog.quality_scores+assets | rows=%d | critical=%d | schema_drift=%d",
+        len(rows), critical, drift_count,
         extra={"json_fields": {
             "result_count": len(rows),
             "critical_count": critical,
@@ -130,5 +134,5 @@ def get_quality_scores(
         }},
     )
     if critical:
-        logger.warning("get_quality_scores: %d assets in critical freshness state", critical)
+        logger.warning("[api] GET /governance/quality: %d assets in critical freshness state | table=risklens_catalog.quality_scores", critical)
     return rows

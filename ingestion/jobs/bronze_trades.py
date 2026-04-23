@@ -111,7 +111,7 @@ def generate_synthetic_trades(trade_date: datetime, n: int = 2000) -> list[dict]
     Deterministic seed based on date so re-runs produce identical rows.
     """
     date_str = trade_date.strftime("%Y-%m-%d")
-    log.info(f"→ generate_synthetic_trades called: date={date_str} n={n}")
+    log.info(f"[bronze→ingest] Generating {n:,} synthetic DTCC trades | date={date_str} | seed={int(trade_date.strftime('%Y%m%d'))} | program=bronze_trades.py")
     seed = int(trade_date.strftime("%Y%m%d"))
     random.seed(seed)
     now = datetime.utcnow()
@@ -155,32 +155,32 @@ def generate_synthetic_trades(trade_date: datetime, n: int = 2000) -> list[dict]
             "trade_date":                date_str,
         })
 
-    log.info(f"← generate_synthetic_trades done: {len(rows):,} rows, distribution={asset_class_counts}")
+    log.info(f"[bronze→ingest] ✓ Generated {len(rows):,} DTCC synthetic trade rows | date={date_str} | asset_class_distribution={asset_class_counts} | next=write→risklens_bronze.trades_r")
     return rows
 
 
 def ingest_date(spark: SparkSession, project: str, bucket: str, trade_date: datetime):
     """Generate synthetic DTCC trades for trade_date and write to BigQuery bronze."""
     date_str = trade_date.strftime("%Y-%m-%d")
-    log.info(f"→ ingest_date called: date={date_str} project={project}")
+    log.info(f"[bronze→ingest] Starting trade ingestion | table=risklens_bronze.trades_r | date={date_str} | project={project} | program=bronze_trades.py")
 
     rows = generate_synthetic_trades(trade_date, n=2000)
     row_count = len(rows)
-    log.info(f"  Generated {row_count:,} synthetic trade rows for {date_str}")
+    log.info(f"[bronze→ingest] Synthetic DTCC rows generated | row_count={row_count:,} | date={date_str} | source=synthetic://dtcc/{date_str}")
 
     # Zero-row guard: fail loudly on weekdays if no rows produced
     if row_count == 0 and trade_date.weekday() < 5:
-        log.error(f"ingest_date: Zero rows generated for weekday {date_str} — pipeline guard triggered")
+        log.error(f"[bronze→ingest] FAILED: Zero rows generated for weekday {date_str} | table=risklens_bronze.trades_r | error=generator_produced_empty_result | program=bronze_trades.py", exc_info=False)
         raise RuntimeError(
             f"bronze_trades: Zero rows generated for weekday {date_str}. "
             "Investigate synthetic generator — pipeline must not silently write nothing."
         )
 
-    log.debug(f"  Creating Spark DataFrame from {row_count:,} rows")
+    log.debug(f"[bronze→ingest] Creating Spark DataFrame | rows={row_count:,} | schema=BRONZE_SCHEMA (16 cols)")
     df = spark.createDataFrame(rows, schema=BRONZE_SCHEMA)
 
     # Write to BigQuery — append mode (bronze is immutable)
-    log.info(f"  Writing {row_count:,} rows to risklens_bronze.trades_r for {date_str}")
+    log.info(f"[bronze→ingest] Writing to BigQuery | table=risklens_bronze.trades_r | rows={row_count:,} | date={date_str} | partition=ingested_at | cluster=asset_class | mode=append")
     (
         df.write
         .format("bigquery")
@@ -196,17 +196,17 @@ def ingest_date(spark: SparkSession, project: str, bucket: str, trade_date: date
         .save()
     )
 
-    log.info(f"← ingest_date done: {row_count:,} rows written to risklens_bronze.trades_r for {date_str}")
+    log.info(f"[bronze→ingest] ✓ Written {row_count:,} rows → risklens_bronze.trades_r | date={date_str} | partition=ingested_at | next=silver_transform.py")
 
 
 def main():
-    log.info("→ main (bronze_trades) called")
+    log.info(f"[bronze→ingest] Pipeline starting | program=bronze_trades.py | target=risklens_bronze.trades_r")
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--bucket",  required=True)
     parser.add_argument("--days",    type=int, default=1, help="Number of past trading days to ingest")
     args = parser.parse_args()
-    log.info(f"  args: project={args.project} bucket={args.bucket} days={args.days}")
+    log.info(f"[bronze→ingest] Args | project={args.project} | bucket={args.bucket} | days={args.days} | table=risklens_bronze.trades_r")
 
     spark = (
         SparkSession.builder
@@ -218,23 +218,23 @@ def main():
 
     end_date   = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     start_date = end_date - timedelta(days=args.days)
-    log.info(f"  Processing date range: {start_date.date()} to {end_date.date()} ({args.days} days)")
+    log.info(f"[bronze→ingest] Date range | start={start_date.date()} | end={end_date.date()} | days_requested={args.days} | table=risklens_bronze.trades_r")
 
     processed_days = 0
     skipped_weekend = 0
     current = start_date
     while current <= end_date:
         if current.weekday() < 5:   # skip weekends
-            log.info(f"  Processing weekday: {current.strftime('%Y-%m-%d')}")
+            log.info(f"[bronze→ingest] Processing weekday | date={current.strftime('%Y-%m-%d')} | table=risklens_bronze.trades_r | program=bronze_trades.py")
             ingest_date(spark, args.project, args.bucket, current)
             processed_days += 1
         else:
-            log.debug(f"  Skipping weekend: {current.strftime('%Y-%m-%d')}")
+            log.debug(f"[bronze→ingest] Skipping weekend | date={current.strftime('%Y-%m-%d')}")
             skipped_weekend += 1
         current += timedelta(days=1)
 
     spark.stop()
-    log.info(f"← main (bronze_trades) done: processed_days={processed_days} skipped_weekend={skipped_weekend}")
+    log.info(f"[bronze→ingest] ✓ Pipeline complete | program=bronze_trades.py | table=risklens_bronze.trades_r | processed_days={processed_days} | skipped_weekend={skipped_weekend} | next=silver_transform.py")
 
 
 if __name__ == "__main__":
