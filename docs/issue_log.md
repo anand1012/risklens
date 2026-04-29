@@ -78,21 +78,28 @@ So the synthetic lineage graph collapses a 2-hop path into 3 direct edges, hidin
 
 ---
 
-## I-13 — Zombie Dataproc clusters from SIGKILL'd refresh runs
+## I-13 — Zombie Dataproc clusters
 
-**Symptom:** GCP billing showed Compute Engine usage of $101.21/month against credits, vs the README's claimed ~$25/month for GKE. Diagnosis via `gcloud compute instances list` revealed 3 RUNNING `n2-standard-4` Dataproc cluster master VMs in `us-east1-c` from past `refresh_data.sh` runs (Apr 23, Apr 24, Apr 26), plus 1 ERROR cluster `risklens-dataproc-test` in `us-central1-b`. ~$140/month gross zombie spend.
+**Symptom:** GCP billing showed Compute Engine usage of $101.21/month against credits vs the README's claimed ~$25/month. Diagnosis via `gcloud compute instances list` revealed 3 RUNNING `n2-standard-4` Dataproc cluster master VMs in `us-east1-c` named `risklens-daily-2026-04-{23,24,26}`, plus 1 ERROR cluster `risklens-dataproc-test` in `us-central1-b`. ~$140/month gross zombie spend.
 
-**Root cause:** `scripts/refresh_data.sh` relies solely on `trap cleanup EXIT` to delete the Dataproc cluster. Bash trap EXIT does NOT fire when:
-- Laptop goes to sleep mid-run
-- SSH/network drops
-- Shell receives SIGKILL (terminal closed forcibly)
-- CI runner is preempted
+**Initial (wrong) RCA:** First diagnosed as a `scripts/refresh_data.sh` issue — assumed `trap cleanup EXIT` had been bypassed by SIGKILL/laptop sleep. **That was wrong.** Caught by the user — the cluster naming pattern `risklens-daily-YYYY-MM-DD` does NOT match `refresh_data.sh`'s naming `risklens-dataproc-YYYYMMDDHHmm`.
 
-Each missed teardown left an n2-standard-4 master VM running 24/7.
+**Real RCA — three independent bugs in the scheduled workflow chain:**
+
+1. **`risklens-adhoc-run` Cloud Scheduler job was firing every minute** (cron `* * * * *`). It was not in the repo — created manually via `gcloud` on 2026-04-23 (almost certainly by a past Claude session that meant to one-shot trigger the workflow but used a recurring cron instead). Description: *"Adhoc run — 2026-04-23 — triggered via Cloud Scheduler (proper channel)"*. Cloud Workflows execution log showed **one FAILED execution every 60 seconds for days**.
+2. **`infra/workflows/daily_refresh.yaml` has no `try/except`.** The original YAML had a `delete_cluster` step at the end with a comment claiming *"Cluster is always deleted on exit, even on failure."* — but Cloud Workflows requires explicit `try/except` semantics. Without it, any `raise` from `wait_job` (failed Spark job, cluster ERROR state) skipped the cleanup. **This was the actual root cause of the orphaned clusters**, not the bash trap in `refresh_data.sh`.
+3. **No server-side cluster lifecycle limits.** The `create_cluster` body in the YAML didn't specify `lifecycleConfig.idleDeleteTtl` or `autoDeleteTtl`, so even a runaway workflow execution would leave the cluster alive indefinitely.
 
 **Fix:**
-1. **Live cleanup:** deleted 4 zombie clusters (3 RUNNING + 1 ERROR) in parallel via `gcloud dataproc clusters delete`. Verified zero compute instances except the GKE node.
-2. **Belt + suspenders teardown** in `scripts/refresh_data.sh` — added `--max-idle=30m` (auto-delete after 30 min idle) and `--max-age=2h` (hard-kill after 2 h regardless of state) to the cluster create call. These fire server-side at the Dataproc control plane, not bash, so they survive SIGKILL.
-3. **GKE cost helper** `scripts/scale_gke.sh up|down|status` so the cluster can be parked between demos to save ~$50/month gross when not actively interview-prepping.
+1. **Live cleanup:** deleted 4 zombie clusters in parallel via `gcloud dataproc clusters delete`.
+2. **Killed the bleeding source:** deleted `risklens-adhoc-run` entirely; paused `risklens-daily-pipeline`. Single source of truth is now `setup_scheduler.sh` (in repo) — manual `gcloud scheduler jobs run risklens-daily-pipeline` for ad-hoc runs.
+3. **Patched `infra/workflows/daily_refresh.yaml`:**
+   - Added `lifecycleConfig.idleDeleteTtl: 1800s` + `autoDeleteTtl: 7200s` to the `create_cluster` body — Dataproc control plane auto-deletes regardless of workflow state.
+   - Wrapped the entire pipeline body (wait_cluster through gold_aggregate) in `try/except`. Captures error to `pipeline_error`, runs `delete_cluster` unconditionally, then re-raises so the execution still surfaces as FAILED in Cloud Workflows.
+   - Re-deployed via `gcloud workflows deploy`. Confirmed `state: ACTIVE`.
+4. **Hardened `scripts/refresh_data.sh`** with `--max-idle=30m` and `--max-age=2h` on the cluster create call. The original trap-not-firing concern is real even if it wasn't the cause of these zombies — same belt + suspenders pattern as the workflow.
+5. **GKE cost helper** `scripts/scale_gke.sh up|down|status` to park the GKE cluster between demos (~$50/month gross savings while parked).
 
-**Why this matters:** RiskLens is a portfolio project running on GCP credits. Every dollar of zombie spend is a dollar of credits burned that should be funding the demo through the job hunt.
+**Why three layers:** Any single one would have prevented the leak. Defense in depth means it can't happen again even if one layer regresses.
+
+**Lesson:** Trust naming conventions. The cluster name pattern was the giveaway from the start — should have searched the repo for it before guessing at causes.
