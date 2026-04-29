@@ -57,6 +57,15 @@ gcloud storage cp ingestion/synthetic/generate.py  "gs://${BUCKET_NAME}/jobs/"
 echo "  Jobs uploaded."
 
 # ── Create ephemeral Dataproc cluster ─────────────────────────────────────────
+# Belt + suspenders teardown so a killed run can't leave a zombie cluster
+# burning $140/mo on an n2-standard-4 master VM:
+#   1. trap cleanup EXIT  — fires on normal/error exit (~90% of cases)
+#   2. --max-idle=30m     — Dataproc auto-deletes if no jobs run for 30 min
+#                           (catches laptop sleep, network drop, SIGKILL
+#                           that bypasses the bash trap)
+#   3. --max-age=2h       — Dataproc hard-kills after 2h regardless of state
+#                           (catches stuck jobs / runaway loops)
+# Pipeline normally completes in 10-15 min, so these limits are generous.
 echo "--- Creating Dataproc cluster ---"
 gcloud dataproc clusters create "$CLUSTER_NAME" \
   --region="$REGION" \
@@ -66,8 +75,10 @@ gcloud dataproc clusters create "$CLUSTER_NAME" \
   --image-version="2.1-debian11" \
   --service-account="risklens-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
   --initialization-actions="gs://${BUCKET_NAME}/scripts/dataproc_init.sh" \
+  --max-idle=30m \
+  --max-age=2h \
   --quiet
-echo "  Cluster ready: $CLUSTER_NAME"
+echo "  Cluster ready: $CLUSTER_NAME (auto-delete: 30m idle / 2h hard cap)"
 
 # ── Helper: submit and optionally wait ───────────────────────────────────────
 submit_job() {

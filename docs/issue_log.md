@@ -14,6 +14,7 @@
 | I-10| Lineage graph 404 for catalog/lineage meta-tables            | Resolved |
 | I-11| Duplicate rows in `risklens_catalog.assets` for 2 asset_ids  | Resolved |
 | I-12| `silver_positions` missing from lineage graph (audit finding) | Resolved |
+| I-13| Zombie Dataproc clusters — refresh_data.sh trap doesn't fire on SIGKILL | Resolved |
 
 ---
 
@@ -74,3 +75,24 @@ So the synthetic lineage graph collapses a 2-hop path into 3 direct edges, hidin
 3. Optional (not required for the fix): add an edge story in `api/routers/lineage.py:EDGE_STORIES` for `silver_positions → gold_trade_positions` so users get a business-language click-through.
 
 **Impact check:** `silver.positions` is currently 0 rows (known, see I-3) because upstream DTCC SDR returns 404. Lineage DAG accuracy is independent of row counts — fix is safe.
+
+---
+
+## I-13 — Zombie Dataproc clusters from SIGKILL'd refresh runs
+
+**Symptom:** GCP billing showed Compute Engine usage of $101.21/month against credits, vs the README's claimed ~$25/month for GKE. Diagnosis via `gcloud compute instances list` revealed 3 RUNNING `n2-standard-4` Dataproc cluster master VMs in `us-east1-c` from past `refresh_data.sh` runs (Apr 23, Apr 24, Apr 26), plus 1 ERROR cluster `risklens-dataproc-test` in `us-central1-b`. ~$140/month gross zombie spend.
+
+**Root cause:** `scripts/refresh_data.sh` relies solely on `trap cleanup EXIT` to delete the Dataproc cluster. Bash trap EXIT does NOT fire when:
+- Laptop goes to sleep mid-run
+- SSH/network drops
+- Shell receives SIGKILL (terminal closed forcibly)
+- CI runner is preempted
+
+Each missed teardown left an n2-standard-4 master VM running 24/7.
+
+**Fix:**
+1. **Live cleanup:** deleted 4 zombie clusters (3 RUNNING + 1 ERROR) in parallel via `gcloud dataproc clusters delete`. Verified zero compute instances except the GKE node.
+2. **Belt + suspenders teardown** in `scripts/refresh_data.sh` — added `--max-idle=30m` (auto-delete after 30 min idle) and `--max-age=2h` (hard-kill after 2 h regardless of state) to the cluster create call. These fire server-side at the Dataproc control plane, not bash, so they survive SIGKILL.
+3. **GKE cost helper** `scripts/scale_gke.sh up|down|status` so the cluster can be parked between demos to save ~$50/month gross when not actively interview-prepping.
+
+**Why this matters:** RiskLens is a portfolio project running on GCP credits. Every dollar of zombie spend is a dollar of credits burned that should be funding the demo through the job hunt.
