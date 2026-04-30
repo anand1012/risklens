@@ -15,6 +15,7 @@
 | I-11| Duplicate rows in `risklens_catalog.assets` for 2 asset_ids  | Resolved |
 | I-12| `silver_positions` missing from lineage graph (audit finding) | Resolved |
 | I-13| Zombie Dataproc clusters — refresh_data.sh trap doesn't fire on SIGKILL | Resolved |
+| I-14| Catalog `assets` table wiped to 21 rows on every refresh (8 meta-tables disappearing) | Resolved |
 
 ---
 
@@ -103,3 +104,22 @@ So the synthetic lineage graph collapses a 2-hop path into 3 direct edges, hidin
 **Why three layers:** Any single one would have prevented the leak. Defense in depth means it can't happen again even if one layer regresses.
 
 **Lesson:** Trust naming conventions. The cluster name pattern was the giveaway from the start — should have searched the repo for it before guessing at causes.
+
+---
+
+## I-14 — Catalog `assets` table wiped to 21 rows on every refresh
+
+**Symptom:** `/api/assets` returned 21 rows in production. Should be 29 (verified after PR #35). The 8 missing assets were exactly the catalog/lineage layer meta-tables added in PR #32: `sla_status`, `quality_scores`, `ownership`, `schema_registry`, `access_log`, `desk_registry`, `lineage_nodes`, `lineage_edges`.
+
+**Root cause:** `ingestion/jobs/bronze_synthetic.py:316` writes `risklens_catalog.assets` with `mode=overwrite`. Every pipeline run, Spark TRUNCATEs the table and replaces it with rows from `ingestion/synthetic/generate.py:ASSETS`. The 8 meta-tables were added to BQ via ad-hoc INSERT in PR #32 but never added to `generate.py`, so the next refresh wiped them. They had been gone for ≥6 days (since the Apr 23 daily-pipeline run, per BQ time-travel).
+
+**This is the same anti-pattern that caused I-11** (PR #32 added rows via ad-hoc INSERT instead of editing the source code). I-11's symptom was duplicates from a pre-existing INSERT colliding with the ad-hoc one. I-14's symptom is rows getting wiped by the next regen. Two faces of the same root cause: code is the source of truth for any table the pipeline regenerates.
+
+**Fix:**
+1. **`generate.py`:** added 8 entries to `ASSETS` (6 catalog-layer + 2 lineage-layer) and 8 matching entries to `ASSET_DESCRIPTIONS`. Tags auto-generate as `[domain, layer, "frtb"]`. Downstream `gen_ownership()` and `gen_quality_scores()` already iterate `ASSETS`, so they'll automatically include the meta-tables on next refresh too.
+2. **Live BQ:** INSERTed the 8 missing rows so the live API returns 29 immediately, without waiting for the next pipeline run.
+3. **Note on `lineage.nodes/edges`, `schema_registry`, `ownership`:** these are also overwritten on every run, but they're correctly synced via code (`gen_lineage()`, `gen_schema_registry()`, `gen_ownership()`). I-14 is only `assets`.
+
+**Why the fake `row_count` / `size_bytes`:** `gen_assets_catalog()` populates these via `random.randint()` on every run. Cosmetic for the catalog UI but technically wrong — leaving alone in this PR (one bug at a time), flagged as latent.
+
+**Lesson reinforced (from I-11):** ad-hoc BQ writes have a half-life of one pipeline refresh. Any change to a table the pipeline regenerates MUST be made in the code that generates it, in the same PR.
