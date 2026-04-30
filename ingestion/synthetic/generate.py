@@ -88,6 +88,21 @@ ASSETS = [
     {"asset_id": "ref_instrument_master", "name": "Instrument Master",                   "domain": "reference",  "layer": "gold"},
     {"asset_id": "ref_counterparty",      "name": "Counterparty Master",                 "domain": "reference",  "layer": "gold"},
     {"asset_id": "ref_currency",          "name": "Currency Reference",                  "domain": "reference",  "layer": "gold"},
+    # Catalog (governance / housekeeping tables — written by the system itself,
+    # no upstream pipeline. See I-10 for why these need to live in the catalog
+    # but NOT in risklens_lineage.nodes. See I-14 for why they MUST live here
+    # in code: bronze_synthetic.py overwrites risklens_catalog.assets on every
+    # run from this list, so anything missing here gets wiped silently.)
+    {"asset_id": "sla_status",            "name": "SLA Status Tracker",        "domain": "governance", "layer": "catalog"},
+    {"asset_id": "quality_scores",        "name": "Data Quality Scores",       "domain": "governance", "layer": "catalog"},
+    {"asset_id": "ownership",             "name": "Asset Ownership",           "domain": "governance", "layer": "catalog"},
+    {"asset_id": "schema_registry",       "name": "Schema Registry",           "domain": "governance", "layer": "catalog"},
+    {"asset_id": "access_log",            "name": "Access Audit Log",          "domain": "governance", "layer": "catalog"},
+    {"asset_id": "desk_registry",         "name": "Desk Registry",             "domain": "governance", "layer": "catalog"},
+    # Lineage (graph storage — not a pipeline output, written by setup_bigquery
+    # and gen_lineage().)
+    {"asset_id": "lineage_nodes",         "name": "Lineage Nodes",             "domain": "lineage",    "layer": "lineage"},
+    {"asset_id": "lineage_edges",         "name": "Lineage Edges",             "domain": "lineage",    "layer": "lineage"},
 ]
 
 ASSET_DESCRIPTIONS = {
@@ -112,6 +127,16 @@ ASSET_DESCRIPTIONS = {
     "ref_instrument_master": "Master reference for all traded instruments. Contains ISIN, CUSIP, asset class, currency, and desk mapping. Source of truth for instrument classification.",
     "ref_counterparty":      "Master reference for all trading counterparties. Contains LEI, credit rating, jurisdiction, and netting agreement details.",
     "ref_currency":          "Currency reference table. ISO codes, decimal places, and settlement calendars for all currencies in the trade universe.",
+    # ── Catalog meta-tables (governance / housekeeping) ─────────────────────
+    "sla_status":            "Per-asset SLA tracker: expected_refresh, actual_refresh, breach_flag, breach_duration_mins, checked_at. Written by gold_aggregate.py and the daily refresh workflow. Surface for SLA breach alerts.",
+    "quality_scores":        "Per-asset data quality metrics: null_rate, duplicate_rate, schema_drift, freshness_status, last_checked. Written by silver_transform.py per pipeline run. Surface for the Governance / Quality dashboard.",
+    "ownership":             "Asset ownership registry: owner_name, team, steward, email, assigned_date. Source of truth for accountability and regulatory audit-trail questions like 'who owns the VaR feed?'.",
+    "schema_registry":       "Per-column schema metadata for every registered asset: column_name, data_type, nullable, description, sample. Sourced from BigQuery INFORMATION_SCHEMA. Critical for AI Chat schema grounding (see I-6/I-9) — without this, Claude hallucinates column names.",
+    "access_log":            "Page/action audit log for the RiskLens UI: user sessions, pages visited, asset detail drawers opened, search queries. Used for usage analytics and to demonstrate the kind of audit trail a regulator would expect on a production catalog.",
+    "desk_registry":         "FRTB trading desk registry: desk_id, risk_class (GIRR/FX/CSR_NS/EQ/COMM), business_line, model_type, risk_taker_count, liquidity_horizon. Joined onto trade and risk tables for desk-level capital aggregation.",
+    # ── Lineage graph storage ───────────────────────────────────────────────
+    "lineage_nodes":         "Graph nodes for the RiskLens data-lineage graph: node_id, name, type (source/pipeline/table/report/model), domain, layer, metadata. Drives the interactive ReactFlow lineage view at /lineage.",
+    "lineage_edges":         "Graph edges for the RiskLens data-lineage graph: from_node_id, to_node_id, relationship (feeds/transforms/enriches/aggregates), pipeline_job. Each edge can have a clickable business-language transformation story rendered in the UI.",
 }
 
 LINEAGE_EDGES = [
